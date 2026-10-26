@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '7 (libellé Taille)';
+const APP_VERSION = '8 (mensurations)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -17,7 +17,7 @@ function h(tag, props, ...kids) {
     else if (v === true) el.setAttribute(k, '');
     else el.setAttribute(k, v);
   }
-  for (const kid of kids.flat()) {
+  for (const kid of kids.flat(Infinity)) {
     if (kid == null || kid === false) continue;
     el.append(kid.nodeType ? kid : document.createTextNode(kid));
   }
@@ -27,10 +27,10 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 function s(tag, props, ...kids) {
   const el = document.createElementNS(SVGNS, tag);
   for (const [k, v] of Object.entries(props || {})) el.setAttribute(k, v);
-  for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  for (const kid of kids.flat(Infinity)) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(kid));
   return el;
 }
-function mount(...kids) { app.replaceChildren(...kids.flat().filter(k => k != null && k !== false)); }
+function mount(...kids) { app.replaceChildren(...kids.flat(Infinity).filter(k => k != null && k !== false)); }
 const pad2 = n => String(n).padStart(2, '0');
 const ymd = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const today = () => ymd(new Date());
@@ -387,34 +387,55 @@ function viewExercise(exId) {
         [...hist].reverse().map(x => h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, x.sets.map(s2 => `${fmtKg(s2.kg)}×${s2.reps}`).join('  ')))))));
 }
 
+// Mensurations suivies en plus du poids. La clé est celle stockée dans data.json.
+const MEASURES = [
+  { key: 'waist', label: 'Tour de taille', short: 'T. de taille', better: 'down', hint: 'au niveau du nombril, ventre relâché' },
+  { key: 'chest', label: 'Tour de poitrine', short: 'Poitrine', better: 'up', hint: 'sous les aisselles, à hauteur des mamelons, après une expiration normale' },
+  { key: 'biceps', label: 'Tour de biceps', short: 'Biceps', better: 'up', hint: 'bras détendu le long du corps, à l\'endroit le plus large' },
+  { key: 'thigh', label: 'Tour de cuisse', short: 'Cuisse', better: 'up', hint: 'à mi-cuisse, debout, jambe détendue' },
+];
+
 function viewBody() {
   setTab('corps');
   const list = Object.values(db.body).filter(b => !b.deleted).sort((a, b) => a.date.localeCompare(b.date));
   const fDate = h('input', { type: 'date', value: today() });
-  const fP = h('input', { type: 'text', inputmode: 'decimal', placeholder: '95' });
-  const fT = h('input', { type: 'text', inputmode: 'decimal', placeholder: 'cm' });
+  const fP = h('input', { type: 'text', inputmode: 'decimal', placeholder: 'kg' });
   const fM = h('input', { type: 'text', inputmode: 'decimal', placeholder: '%' });
+  const fMeas = Object.fromEntries(MEASURES.map(m => [m.key, h('input', { type: 'text', inputmode: 'decimal', placeholder: 'cm' })]));
   const existing = d => db.body[d] && !db.body[d].deleted ? db.body[d] : null;
-  fDate.addEventListener('change', () => {
+  const fill = () => {
     const e = existing(fDate.value);
-    fP.value = e?.poids != null ? fmtKg(e.poids) : ''; fT.value = e?.taille != null ? fmtKg(e.taille) : ''; fM.value = e?.mg != null ? fmtKg(e.mg) : '';
-  });
+    fP.value = e?.poids != null ? fmtKg(e.poids) : ''; fM.value = e?.mg != null ? fmtKg(e.mg) : '';
+    for (const m of MEASURES) fMeas[m.key].value = e?.[m.key] != null ? fmtKg(e[m.key]) : '';
+  };
+  fDate.addEventListener('change', fill);
   const add = h('button', { class: 'btn', onclick: () => {
-    const poids = num(fP.value), taille = num(fT.value), mg = num(fM.value);
-    if (poids == null && taille == null && mg == null) return;
+    const vals = { poids: num(fP.value), mg: num(fM.value), ...Object.fromEntries(MEASURES.map(m => [m.key, num(fMeas[m.key].value)])) };
+    if (!fDate.value || Object.values(vals).every(v => v == null)) return;
     const prev = existing(fDate.value) || {};
-    db.body[fDate.value] = { id: fDate.value, date: fDate.value, poids: poids ?? prev.poids ?? null, taille: taille ?? prev.taille ?? null, mg: mg ?? prev.mg ?? null, updatedAt: Date.now() };
+    const rec = { ...prev, id: fDate.value, date: fDate.value, updatedAt: Date.now() };
+    for (const [k, v] of Object.entries(vals)) rec[k] = v ?? prev[k] ?? null;
+    db.body[fDate.value] = rec;
     save(); viewBody();
   } }, 'Enregistrer');
 
-  const wPts = list.filter(b => b.poids != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b.poids }));
+  const pts = key => list.filter(b => b[key] != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b[key] }));
+  const wPts = pts('poids');
   const avg = wPts.map(p => {
     const win = wPts.filter(q => q.t <= p.t && q.t > p.t - 7 * 864e5);
     return { t: p.t, v: Math.round(win.reduce((a, q) => a + q.v, 0) / win.length * 10) / 10 };
   });
-  const tPts = list.filter(b => b.taille != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b.taille }));
   const last = [...list].reverse().find(b => b.poids != null);
   const prevW = [...list].reverse().filter(b => b.poids != null)[1];
+
+  // Bilan des mensurations : dernière valeur et évolution depuis la première mesure.
+  const summaryRows = MEASURES.map(m => {
+    const p = pts(m.key); if (!p.length) return null;
+    const first = p[0].v, lastV = p[p.length - 1].v, d = Math.round((lastV - first) * 10) / 10;
+    const good = d === 0 ? '' : (m.better === 'down' ? d < 0 : d > 0) ? 'up' : 'down';
+    return h('tr', {}, h('td', {}, m.short), h('td', {}, `${fmtKg(lastV)} cm`),
+      h('td', { class: 'delta ' + good }, p.length > 1 ? `${d > 0 ? '+' : ''}${fmtKg(d)} cm` : 'première mesure'));
+  }).filter(Boolean);
 
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Corps'), syncChip()),
@@ -424,17 +445,23 @@ function viewBody() {
       prevW ? h('div', { class: 'sub delta ' + (last.poids <= prevW.poids ? 'up' : 'down') }, `${last.poids - prevW.poids > 0 ? '+' : ''}${fmtKg(Math.round((last.poids - prevW.poids) * 10) / 10)} kg depuis ${fmtDate(prevW.date)}`) : null) : null,
     h('div', { class: 'card' },
       h('label', { class: 'field' }, h('span', {}, 'Date'), fDate),
-      h('div', { class: 'grid3' },
+      h('div', { class: 'grid2' },
         h('label', { class: 'field' }, h('span', {}, 'Poids (kg)'), fP),
-        h('label', { class: 'field' }, h('span', {}, 'Taille (cm)'), fT),
-        h('label', { class: 'field' }, h('span', {}, 'Gras (%)'), fM)),
-      add),
+        h('label', { class: 'field' }, h('span', {}, 'Masse grasse (%)'), fM)),
+      h('div', { class: 'grid2' }, MEASURES.map(m => h('label', { class: 'field' }, h('span', {}, `${m.label} (cm)`), fMeas[m.key]))),
+      add,
+      h('details', { style: 'margin-top:10px' }, h('summary', { class: 'sub' }, 'Comment mesurer'),
+        h('p', { class: 'sub' }, 'Mètre ruban à plat, non serré, le matin, toujours au même endroit et du même côté du corps.'),
+        h('ul', { class: 'sub' }, MEASURES.map(m => h('li', {}, `${m.label} : ${m.hint}.`))))),
+    summaryRows.length ? [h('h2', {}, 'Évolution des mensurations'),
+      h('div', { class: 'card' }, h('table', {}, h('tr', {}, h('th', {}, 'Mesure'), h('th', {}, 'Dernière'), h('th', {}, 'Depuis la 1re')), summaryRows))] : null,
     h('h2', {}, 'Poids'),
     wPts.length ? lineChart([{ name: 'Moyenne 7 jours', points: avg }, { name: 'Pesée', points: wPts, raw: true, line: false }], 'kg') : h('p', { class: 'muted' }, 'Aucune pesée.'),
-    tPts.length ? [h('h2', {}, 'Taille'), lineChart([{ name: 'Taille', points: tPts }], 'cm')] : null,
+    pts('mg').length ? [h('h2', {}, 'Masse grasse'), lineChart([{ name: 'Masse grasse', points: pts('mg') }], '%')] : null,
+    MEASURES.map(m => pts(m.key).length ? [h('h2', {}, m.label), lineChart([{ name: m.label, points: pts(m.key) }], 'cm')] : null),
     h('details', {}, h('summary', {}, 'Toutes les mesures'),
-      h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'kg'), h('th', {}, 'cm'), h('th', {}, '% gras')),
-        [...list].reverse().map(b => h('tr', {}, h('td', {}, fmtDate(b.date)), h('td', {}, fmtKg(b.poids) || '–'), h('td', {}, fmtKg(b.taille) || '–'), h('td', {}, fmtKg(b.mg) || '–'))))));
+      h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'kg'), h('th', {}, '% gras'), MEASURES.map(m => h('th', {}, m.short))),
+        [...list].reverse().map(b => h('tr', {}, h('td', {}, fmtDate(b.date)), h('td', {}, fmtKg(b.poids) || '–'), h('td', {}, fmtKg(b.mg) || '–'), MEASURES.map(m => h('td', {}, fmtKg(b[m.key]) || '–')))))));
 }
 
 // ---------- Synchronisation GitHub ----------
