@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '17 (réglages du repos)';
+const APP_VERSION = '18 (réglages en rubriques)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -633,6 +633,8 @@ function refreshChips() {
   document.querySelectorAll('.chip.sync').forEach(c => c.replaceWith(syncChip()));
   const line = document.getElementById('sync-line');
   if (line) { line.textContent = syncMessage(); line.className = 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''); }
+  const sum = document.getElementById('sync-sum');
+  if (sum) sum.replaceChildren(...syncSummary());
   const btn = document.getElementById('sync-btn');
   if (btn) {
     const busy = sync.state === 'busy', flash = Date.now() < (sync.flashUntil || 0);
@@ -711,7 +713,7 @@ const merge = (local, remote) => ({
 async function syncNow(manual) {
   const isManual = manual === true;
   slog(isManual ? 'Appui sur « Synchroniser maintenant »' : 'Synchro automatique');
-  if (!cfgOk()) { slog(`Annulé : il manque ${missingFields().join(', ')}`); sync.state = 'off'; if (isManual) go('#/reglages'); return; }
+  if (!cfgOk()) { slog(`Annulé : il manque ${missingFields().join(', ')}`); sync.state = 'off'; if (isManual) go('#/sync'); return; }
   // Une synchro bloquée depuis plus de 20 s ne doit pas empêcher les suivantes.
   if (syncing && Date.now() - syncStartedAt < 20000) { slog('Une synchro est déjà en cours, appui ignoré'); return; }
   if (!navigator.onLine) { slog('Annulé : le téléphone indique « hors ligne »'); if (isManual) { sync.state = 'err'; sync.msg = 'hors ligne'; refreshChips(); } return; }
@@ -759,66 +761,115 @@ function toCsv() {
   }
   return lines.join('\n');
 }
+// Ligne de liste qui ouvre une rubrique de Réglages
+function navRow(href, icon, icCls, title, summary, summaryId) {
+  return h('a', { class: 'navrow', href },
+    h('span', { class: 'ic ' + icCls }, icon),
+    h('span', {}, h('b', {}, title), h('small', { id: summaryId }, summary)),
+    h('span', { class: 'chev', 'aria-hidden': 'true' }, '›'));
+}
+const syncIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('path', { d: 'M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4' }));
+const saveIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('path', { d: 'M12 3v12M7 10l5 5 5-5M4 20h16' }));
+function syncSummary() {
+  const st = { off: ['', 'Non configurée'], idle: ['', 'Prête'], busy: ['', 'Synchronisation…'], ok: ['ok', `Synchronisé à ${sync.at || ''}`], err: ['err', 'Erreur de synchro'] }[sync.state];
+  return [h('span', { class: 'dot ' + st[0] }), st[1]];
+}
 function viewSettings() {
   setTab('set');
-  const fieldInputs = {};
-  const f = (key, label, type = 'text', ph = '') => {
-    const i = h('input', { type, value: cfg[key], placeholder: ph, autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
-    fieldInputs[key] = i;
-    i.addEventListener('change', () => { cfg[key] = i.value.trim(); store(SKEY, cfg); sync.state = cfgOk() ? 'idle' : 'off'; });
-    return h('label', { class: 'field' }, h('span', {}, label), i);
-  };
-  const fileIn = h('input', { type: 'file', accept: 'application/json', hidden: true });
-  fileIn.addEventListener('change', async () => {
-    try {
-      const data = JSON.parse(await fileIn.files[0].text());
-      db = merge(db, data); save(); alert('Import terminé.'); viewSettings();
-    } catch { alert('Fichier invalide.'); }
-  });
+  syncEditing = false; // une modification de connexion abandonnée n'est pas reprise au retour
   const standalone = window.navigator.standalone || matchMedia('(display-mode: standalone)').matches;
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Réglages'), syncChip()),
-    h('a', { class: 'navrow', href: '#/repos' },
-      h('span', { class: 'ic' }, timerIcon()),
-      h('span', {}, h('b', {}, 'Minuteur de repos'), h('small', {}, restSummary())),
-      h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')),
-    h('h2', {}, 'Synchronisation GitHub'),
-    h('p', { class: 'sub' }, 'Tes données sont enregistrées sur le téléphone, puis copiées dans un dépôt GitHub privé pour les retrouver sur ton PC.'),
-    h('div', { class: 'card' },
-      f('owner', 'Compte GitHub (à saisir)', 'text', 'Exemple : ton-pseudo'),
-      f('repo', 'Dépôt de données (à saisir)', 'text', 'Exemple : muscu-data'),
-      f('path', 'Fichier', 'text', 'Exemple : data.json'),
-      f('token', 'Jeton d\'accès (à saisir)', 'password', 'Colle le jeton ici'),
-      h('button', { class: 'btn', id: 'sync-btn', onclick: (ev) => {
-        // Retour immédiat à l'appui : l'animation et la vibration partent avant tout le reste.
-        const b = ev.currentTarget;
-        b.classList.remove('pressed'); void b.offsetWidth; b.classList.add('pressed');
-        try { navigator.vibrate?.(30); } catch { /* iOS ne vibre pas */ }
-        try {
-          // On relit les champs ici : sur iPhone l'événement « change » peut ne pas être parti avant le toucher.
-          for (const [k, inp] of Object.entries(fieldInputs)) cfg[k] = inp.value.trim();
-          store(SKEY, cfg);
-          sync.state = cfgOk() ? 'idle' : 'off';
-          if (!cfg.path) { cfg.path = 'data.json'; store(SKEY, cfg); }
-          if (!cfgOk()) { slog(`Appui sur « Synchroniser maintenant ». Annulé : il manque ${missingFields().join(', ')}`); sync.flashUntil = Date.now() + 2000; sync.state = 'off'; refreshChips(); return; }
-          syncNow(true);
-        } catch (e) { sync.state = 'err'; sync.msg = String(e.message || e); sync.flashUntil = Date.now() + 2000; refreshChips(); }
-      } }, 'Synchroniser maintenant'),
-      h('div', { class: 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), id: 'sync-line', role: 'status' }, syncMessage()),
-      h('details', { open: true }, h('summary', { class: 'sub' }, 'Journal de la synchro'),
-        h('pre', { id: 'sync-log', class: 'sync-log' }, sync.log.length ? sync.log.join('\n') : 'Aucune tentative pour l\'instant.'))),
-    h('h2', {}, 'Sauvegarde'),
-    h('div', { class: 'grid2' },
-      h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.json`, JSON.stringify(db, null, 1), 'application/json') }, 'Exporter JSON'),
-      h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.csv`, toCsv(), 'text/csv') }, 'Exporter CSV')),
-    h('div', { style: 'height:10px' }),
-    h('button', { class: 'btn secondary', onclick: () => fileIn.click() }, 'Importer un JSON'), fileIn,
+    h('div', { class: 'navlist' },
+      navRow('#/repos', timerIcon(), '', 'Minuteur de repos', restSummary()),
+      navRow('#/sync', syncIcon(), 'gh', 'Synchronisation GitHub', syncSummary(), 'sync-sum'),
+      navRow('#/sauvegarde', saveIcon(), 'data', 'Sauvegarde', 'Exporter, importer')),
     standalone ? null : [h('h2', {}, 'Installer sur l\'iPhone'),
       h('p', { class: 'sub' }, 'Dans Safari : bouton Partager, puis « Sur l\'écran d\'accueil ». L\'appli s\'ouvrira ensuite en plein écran et fonctionnera sans réseau.')],
     h('h2', {}, 'À propos'),
     h('p', { class: 'sub' }, `Version ${APP_VERSION}`),
     h('p', { class: 'sub' }, `Double progression : quand toutes les séries atteignent le haut de la fourchette de reps, l'appli propose de monter la charge. ${Object.keys(db.sessions).length} séances et ${Object.keys(db.body).length} mesures enregistrées.`));
+}
+// Connexion GitHub : champs modifiables au premier réglage ou après « Modifier la connexion », sinon résumé en lecture seule.
+let syncEditing = false;
+function viewSync() {
+  setTab('set');
+  const editing = syncEditing || !cfgOk();
+  const fieldInputs = {};
+  const f = (key, label, type = 'text', ph = '') => {
+    // En modification, le jeton n'est pas réaffiché : champ vide = on garde l'actuel.
+    const keepToken = key === 'token' && cfgOk();
+    const i = h('input', { type, value: keepToken ? '' : cfg[key], placeholder: keepToken ? 'Laisser vide pour garder l\'actuel' : ph, autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+    fieldInputs[key] = i;
+    // Premier réglage : chaque champ est enregistré dès qu'il est rempli, comme avant.
+    if (!cfgOk()) i.addEventListener('change', () => { cfg[key] = i.value.trim(); store(SKEY, cfg); sync.state = cfgOk() ? 'idle' : 'off'; });
+    return h('label', { class: 'field' }, h('span', {}, label), i);
+  };
+  const readFields = () => {
+    for (const [k, inp] of Object.entries(fieldInputs)) { const v = inp.value.trim(); if (k !== 'token' || v) cfg[k] = v; }
+    if (!cfg.path) cfg.path = 'data.json';
+    store(SKEY, cfg);
+    sync.state = cfgOk() ? 'idle' : 'off';
+  };
+  const syncBtn = h('button', { class: 'btn', id: 'sync-btn', onclick: (ev) => {
+    // Retour immédiat à l'appui : l'animation et la vibration partent avant tout le reste.
+    const b = ev.currentTarget;
+    b.classList.remove('pressed'); void b.offsetWidth; b.classList.add('pressed');
+    try { navigator.vibrate?.(30); } catch { /* iOS ne vibre pas */ }
+    try {
+      // Premier réglage : on relit les champs, sur iPhone l'événement « change » peut ne pas être parti avant le toucher.
+      if (Object.keys(fieldInputs).length) readFields();
+      if (!cfgOk()) { slog(`Appui sur « Synchroniser maintenant ». Annulé : il manque ${missingFields().join(', ')}`); sync.flashUntil = Date.now() + 2000; sync.state = 'off'; refreshChips(); return; }
+      syncNow(true);
+    } catch (e) { sync.state = 'err'; sync.msg = String(e.message || e); sync.flashUntil = Date.now() + 2000; refreshChips(); }
+  } }, 'Synchroniser maintenant');
+  const fields = [
+    f('owner', 'Compte GitHub (à saisir)', 'text', 'Exemple : ton-pseudo'),
+    f('repo', 'Dépôt de données (à saisir)', 'text', 'Exemple : muscu-data'),
+    f('path', 'Fichier', 'text', 'Exemple : data.json'),
+    f('token', 'Jeton d\'accès (à saisir)', 'password', 'Colle le jeton ici')];
+  let card;
+  if (!cfgOk()) card = h('div', { class: 'card' }, fields, syncBtn);
+  else if (editing) card = h('div', { class: 'card' }, fields,
+    h('div', { class: 'grid2' },
+      h('button', { class: 'btn secondary', onclick: () => { syncEditing = false; viewSync(); } }, 'Annuler'),
+      h('button', { class: 'btn', onclick: () => { readFields(); syncEditing = false; viewSync(); syncNow(true); } }, 'Enregistrer')));
+  else card = [
+    h('div', { class: 'card' },
+      h('dl', { class: 'kv' },
+        h('dt', {}, 'Compte'), h('dd', {}, cfg.owner), h('dt', {}, 'Dépôt'), h('dd', {}, cfg.repo),
+        h('dt', {}, 'Fichier'), h('dd', {}, cfg.path), h('dt', {}, 'Jeton'), h('dd', {}, 'enregistré ✓')),
+      h('button', { class: 'btn secondary', onclick: () => { syncEditing = true; viewSync(); } }, 'Modifier la connexion')),
+    syncBtn];
+  mount(
+    h('div', { class: 'row between' }, h('a', { class: 'back', href: '#/reglages' }, '‹ Réglages'), syncChip()),
+    h('h1', {}, 'Synchronisation GitHub'),
+    h('p', { class: 'sub' }, 'Tes données sont enregistrées sur le téléphone, puis copiées dans un dépôt GitHub privé pour les retrouver sur ton PC.'),
+    card,
+    editing && cfgOk() ? null : h('div', { class: 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), id: 'sync-line', role: 'status' }, syncMessage()),
+    h('details', {}, h('summary', { class: 'sub' }, 'Journal de la synchro'),
+      h('pre', { id: 'sync-log', class: 'sync-log' }, sync.log.length ? sync.log.join('\n') : 'Aucune tentative pour l\'instant.')));
   refreshChips(); // aligne le bouton sur l'état réel (par exemple une synchro déjà en cours)
+}
+function viewBackup() {
+  setTab('set');
+  const fileIn = h('input', { type: 'file', accept: 'application/json', hidden: true });
+  fileIn.addEventListener('change', async () => {
+    try {
+      const data = JSON.parse(await fileIn.files[0].text());
+      db = merge(db, data); save(); alert('Import terminé.'); viewBackup();
+    } catch { alert('Fichier invalide.'); }
+  });
+  mount(
+    h('a', { class: 'back', href: '#/reglages' }, '‹ Réglages'),
+    h('h1', {}, 'Sauvegarde'),
+    h('p', { class: 'sub' }, 'Copie de toutes tes séances et mesures dans un fichier, indépendamment de GitHub. Le CSV s\'ouvre dans Excel.'),
+    h('div', { class: 'grid2' },
+      h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.json`, JSON.stringify(db, null, 1), 'application/json') }, 'Exporter JSON'),
+      h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.csv`, toCsv(), 'text/csv') }, 'Exporter CSV')),
+    h('div', { style: 'height:10px' }),
+    h('button', { class: 'btn secondary', onclick: () => fileIn.click() }, 'Importer un JSON'), fileIn,
+    h('p', { class: 'sub', style: 'margin-top:8px' }, 'L\'import fusionne le fichier avec tes données : rien n\'est effacé, la version la plus récente de chaque séance l\'emporte.'));
 }
 
 // ---------- Réglages du minuteur de repos (page dédiée et volet ouvert depuis le minuteur) ----------
@@ -899,6 +950,8 @@ function render() {
     case 'corps': return viewBody();
     case 'reglages': return viewSettings();
     case 'repos': return viewRest();
+    case 'sync': return viewSync();
+    case 'sauvegarde': return viewBackup();
     default: return viewHome();
   }
 }

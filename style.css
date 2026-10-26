@@ -53,7 +53,7 @@ a { color: var(--accent); }
 .card.done { border-color: var(--good); }
 .btn {
   display: block; width: 100%; min-height: 48px; padding: 12px 16px; border: 0; border-radius: 12px;
-  background: var(--accent); color: var(--on-accent); font: 600 16px/1.2 inherit; text-align: center; text-decoration: none;
+  background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 16px; line-height: 1.2; font-family: inherit; text-align: center; text-decoration: none;
 }
 .btn.secondary { background: var(--field); color: var(--ink); }
 .btn.small { min-height: 40px; width: auto; padding: 8px 14px; font-size: 14px; }
@@ -131,6 +131,17 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .navrow b { display: block; font-size: 16px; }
 .navrow small { color: var(--ink-2); font-size: 13px; }
 .navrow .chev { color: var(--muted); font-size: 24px; line-height: 1; }
+.navlist { background: var(--card); border: 1px solid var(--grid); border-radius: 14px; margin: 12px 0 4px; overflow: hidden; }
+.navlist .navrow { border: 0; border-radius: 0; margin: 0; }
+.navlist .navrow + .navrow { border-top: 1px solid var(--grid); }
+.navrow .ic.gh { background: var(--ink-2); color: var(--page); }
+.navrow .ic.data { background: var(--good); }
+.navrow small .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+.navrow small .dot.ok { background: var(--good); }
+.navrow small .dot.err { background: var(--bad); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 12px; font-size: 15px; }
+.kv dt { color: var(--ink-2); }
+.kv dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
 .back { display: inline-block; font-weight: 600; text-decoration: none; padding: 6px 0; }
 .sheet-wrap { position: fixed; inset: 0; z-index: 20; }
 .sheet-wrap .dim { position: absolute; inset: 0; background: rgba(0,0,0,.45); }
