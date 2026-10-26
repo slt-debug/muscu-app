@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '11 (rangée alignée)';
+const APP_VERSION = '12 (signaux de repos)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -49,7 +49,7 @@ function load(key, fallback) {
 }
 function store(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* stockage indisponible */ } }
 let db = Object.assign({ sessions: {}, body: {} }, load(KEY, {}));
-let cfg = Object.assign({ owner: '', repo: '', path: 'data.json', token: '' }, load(SKEY, {}));
+let cfg = Object.assign({ owner: '', repo: '', path: 'data.json', token: '', sound: 'complet' }, load(SKEY, {}));
 function save() { store(KEY, db); scheduleSync(); }
 
 const EXERCISES = {};
@@ -123,41 +123,75 @@ function unlockAudio() {
     if (audioCtx.state === 'suspended') audioCtx.resume();
   } catch { /* pas d'audio */ }
 }
-function beep() {
+// tone(fréquence Hz, départ s, durée s, volume)
+function tone(freq, at, dur, vol, type = 'sine') {
   if (!audioCtx) return;
-  [0, 0.28, 0.56].forEach(delay => {
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.frequency.value = 880; o.connect(g); g.connect(audioCtx.destination);
-    const t = audioCtx.currentTime + delay;
-    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.4, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
-    o.start(t); o.stop(t + 0.22);
-  });
-  try { navigator.vibrate?.([200, 100, 200]); } catch { /* ignoré */ }
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = audioCtx.currentTime + at;
+  o.type = type; o.frequency.value = freq; o.connect(g); g.connect(audioCtx.destination);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+const SOUNDS = {
+  min: () => tone(520, 0, 0.18, 0.3),
+  prep: () => { tone(660, 0, 0.16, 0.3); tone(660, 0.22, 0.16, 0.3); },
+  tick: () => tone(1200, 0, 0.06, 0.35, 'triangle'),
+  end: () => { tone(880, 0, 0.16, 0.4); tone(988, 0.2, 0.16, 0.4); tone(1320, 0.4, 0.5, 0.45); },
+};
+const SOUND_PROFILES = { off: 'Désactivé', discret: 'Discret', standard: 'Standard', complet: 'Complet' };
+const SOUND_HELP = {
+  off: 'Aucun son. La barre passe quand même à l\'orange les 10 dernières secondes.',
+  discret: 'Un bip à 10 s, puis le signal de fin.',
+  standard: 'Double bip à 30 s, tops à 3, 2, 1, puis le signal de fin.',
+  complet: 'Un bip grave à chaque minute restante, double bip à 30 s et à 10 s, tops à 3, 2, 1, puis le signal de fin.',
+};
+// Signaux d'un profil pour un repos de `total` secondes : [{ left: secondes restantes, kind }]
+function timerSignals(profile, total) {
+  if (profile === 'off') return [];
+  const ev = [];
+  if (profile === 'complet') for (let m = 60; m < total; m += 60) ev.push({ left: m, kind: 'min' });
+  if (profile !== 'discret' && total > 30) ev.push({ left: 30, kind: 'prep' });
+  if (profile !== 'standard' && total > 10) ev.push({ left: 10, kind: 'prep' });
+  if (profile !== 'discret') [3, 2, 1].forEach(left => ev.push({ left, kind: 'tick' }));
+  ev.push({ left: 0, kind: 'end' });
+  return ev;
 }
 function startTimer(seconds, label) {
   unlockAudio();
-  timer = { end: Date.now() + seconds * 1000, label, fired: false };
-  renderTimer();
+  timer = { end: Date.now() + seconds * 1000, total: seconds, label, played: new Set(), shown: null };
+  tickTimer();
 }
 function stopTimer() { timer = null; renderTimer(); }
+function addTimer30() { timer.end += 30000; timer.total += 30; timer.shown = null; tickTimer(); }
+function tickTimer() {
+  if (!timer) return;
+  const exact = (timer.end - Date.now()) / 1000;
+  for (const e of timerSignals(cfg.sound, timer.total)) {
+    const key = e.kind + e.left;
+    if (timer.played.has(key) || exact > e.left) continue;
+    timer.played.add(key);
+    // Au retour d'arrière-plan, on ne rejoue pas d'un coup les signaux manqués, sauf la fin.
+    if (e.kind === 'end' || exact > e.left - 1.5) SOUNDS[e.kind]();
+  }
+  const left = Math.ceil(exact);
+  if (timer.shown !== left) { timer.shown = left; renderTimer(); }
+}
 function renderTimer() {
   if (!timer) { timerEl.hidden = true; timerEl.className = ''; return; }
   const left = Math.ceil((timer.end - Date.now()) / 1000);
   timerEl.hidden = false;
   if (left <= 0) {
-    if (!timer.fired) { timer.fired = true; beep(); }
     timerEl.className = 'end';
     timerEl.replaceChildren(h('div', { class: 't' }, 'Repos terminé'), h('button', { onclick: stopTimer }, 'OK'));
     return;
   }
-  timerEl.className = '';
+  timerEl.className = left <= 10 ? 'warn' : '';
   timerEl.replaceChildren(
     h('div', { class: 't' }, `${Math.floor(left / 60)}:${pad2(left % 60)}`),
-    h('button', { onclick: () => { timer.end += 30000; renderTimer(); } }, '+30 s'),
+    h('button', { onclick: addTimer30 }, '+30 s'),
     h('button', { onclick: stopTimer }, 'Stop'));
 }
-setInterval(() => { if (timer) renderTimer(); }, 500);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { if (timer) renderTimer(); syncNow(); } });
+setInterval(tickTimer, 100);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { tickTimer(); syncNow(); } });
 
 let wakeLock = null;
 async function keepAwake() {
@@ -661,6 +695,20 @@ function viewSettings() {
     } catch { alert('Fichier invalide.'); }
   });
   const standalone = window.navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  const soundHelp = h('p', { class: 'sub' }, SOUND_HELP[cfg.sound]);
+  const soundBtns = Object.entries(SOUND_PROFILES).map(([k, label]) => h('button', {
+    type: 'button', role: 'radio', 'data-k': k,
+    onclick: () => {
+      cfg.sound = k; store(SKEY, cfg);
+      // Aperçu : on fait entendre le signal de fin, sauf si le son est désactivé.
+      unlockAudio(); if (k !== 'off') SOUNDS.end();
+      paintSound();
+    } }, label));
+  const paintSound = () => {
+    soundHelp.textContent = SOUND_HELP[cfg.sound];
+    for (const b of soundBtns) { const on = b.dataset.k === cfg.sound; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
+  };
+  paintSound();
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Réglages'), syncChip()),
     h('h2', {}, 'Synchronisation GitHub'),
@@ -688,6 +736,9 @@ function viewSettings() {
       h('div', { class: 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), id: 'sync-line', role: 'status' }, syncMessage()),
       h('details', { open: true }, h('summary', { class: 'sub' }, 'Journal de la synchro'),
         h('pre', { id: 'sync-log', class: 'sync-log' }, sync.log.length ? sync.log.join('\n') : 'Aucune tentative pour l\'instant.'))),
+    h('h2', {}, 'Signaux de repos'),
+    soundHelp,
+    h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Signaux de repos' }, soundBtns),
     h('h2', {}, 'Sauvegarde'),
     h('div', { class: 'grid2' },
       h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.json`, JSON.stringify(db, null, 1), 'application/json') }, 'Exporter JSON'),

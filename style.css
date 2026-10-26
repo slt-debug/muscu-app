@@ -11,6 +11,7 @@
   --on-accent: #ffffff;
   --good: #006300;
   --bad: #d03b3b;
+  --warn: #c26a00;
   --card: #ffffff;
   --field: #f0efec;
 }
@@ -25,6 +26,7 @@
     --series-1: #3987e5;
     --accent: #3987e5;
     --good: #0ca30c;
+    --warn: #e08a1e;
     --card: #1a1a19;
     --field: #262624;
   }
@@ -116,6 +118,11 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 }
 #timer[hidden] { display: none; }
 #timer.end { background: var(--good); color: #fff; }
+#timer.warn { background: var(--warn); color: #fff; }
+#timer { transition: background-color .3s; }
+.seg { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 10px 0; }
+.seg button { min-height: 44px; border: 0; border-radius: 10px; background: var(--field); color: var(--ink); font-family: inherit; font-size: 15px; font-weight: 600; }
+.seg button.on { background: var(--accent); color: var(--on-accent); }
 #timer .t { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; flex: 1; }
 #timer button { border: 0; border-radius: 10px; min-height: 40px; padding: 0 12px; background: rgba(255,255,255,.22); color: inherit; font: 600 14px inherit; }
 .sync-line { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--field); font-size: 14px; color: var(--ink-2); }
