@@ -488,9 +488,19 @@ async function ghPut(data, sha) {
   if (r.status === 409 || r.status === 422) { const e = new Error('conflit'); e.conflict = true; throw e; }
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
 }
+const setCount = r => Object.values(r?.entries || {}).reduce((n, e) => n + (e.sets || []).filter(x => x.done).length, 0);
 function mergeColl(a, b) {
   const out = { ...a };
-  for (const [id, rec] of Object.entries(b || {})) if (!out[id] || (rec.updatedAt || 0) > (out[id].updatedAt || 0)) out[id] = rec;
+  for (const [id, rec] of Object.entries(b || {})) {
+    const cur = out[id];
+    if (!cur) { out[id] = rec; continue; }
+    // Une fiche vide ne remplace jamais une séance qui contient des séries validées (sauf suppression explicite).
+    if (!rec.deleted && !cur.deleted) {
+      if (setCount(rec) === 0 && setCount(cur) > 0) continue;
+      if (setCount(cur) === 0 && setCount(rec) > 0) { out[id] = rec; continue; }
+    }
+    if ((rec.updatedAt || 0) > (cur.updatedAt || 0)) out[id] = rec;
+  }
   return out;
 }
 const merge = (local, remote) => ({ sessions: mergeColl(local.sessions, remote?.sessions), body: mergeColl(local.body, remote?.body) });
