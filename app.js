@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '19 (chrono de séance)';
+const APP_VERSION = '20 (programme modifiable)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -52,8 +52,24 @@ let db = Object.assign({ sessions: {}, body: {} }, load(KEY, {}));
 let cfg = Object.assign({ owner: '', repo: '', path: 'data.json', token: '', sound: 'complet', volume: 1, timbre: 'alarme' }, load(SKEY, {}));
 function save() { store(KEY, db); scheduleSync(); }
 
+// ---------- Versions du programme ----------
+// Le dashboard PC écrit programs.json dans le dépôt de données ({ versions: [{ id, label, from, days, sessions }] }).
+// L'appli le lit à chaque synchro ; sans version reçue, elle utilise le programme intégré (program.js).
+const PKEY = 'muscu.programs';
+let programs = load(PKEY, null);
+const BUILTIN = { id: 'p1', label: 'Programme 1', from: null, days: PROGRAM.days, sessions: PROGRAM.sessions };
+function programFor(date) {
+  const vs = (programs?.versions || []).filter(v => v.from && v.from <= date).sort((a, b) => a.from.localeCompare(b.from));
+  return vs[vs.length - 1] || (programs?.versions || []).slice().sort((a, b) => a.from.localeCompare(b.from))[0] || BUILTIN;
+}
+// Tous les exercices connus (programme intégré puis versions, la plus récente l'emporte pour le nom).
 const EXERCISES = {};
-for (const list of Object.values(PROGRAM.sessions)) for (const ex of list) EXERCISES[ex.id] = EXERCISES[ex.id] || ex;
+function fillExercises() {
+  for (const k of Object.keys(EXERCISES)) delete EXERCISES[k];
+  const all = [BUILTIN, ...(programs?.versions || []).slice().sort((a, b) => a.from.localeCompare(b.from))];
+  for (const p of all) for (const list of Object.values(p.sessions)) for (const ex of list) EXERCISES[ex.id] = ex;
+}
+fillExercises();
 
 function doneSets(entry) {
   return (entry?.sets || []).filter(x => x.done && x.reps > 0 && x.kg != null && x.kg >= 0);
@@ -399,7 +415,8 @@ function setTab(name) {
 function nextTrainingDay() {
   for (let i = 1; i <= 7; i++) {
     const d = new Date(); d.setDate(d.getDate() + i);
-    if (PROGRAM.days[d.getDay()]) return { day: JOURS[d.getDay()], name: PROGRAM.days[d.getDay()] };
+    const n = programFor(ymd(d)).days[d.getDay()];
+    if (n) return { day: JOURS[d.getDay()], name: n };
   }
 }
 function weekStart() {
@@ -409,7 +426,8 @@ function weekStart() {
 function viewHome() {
   setTab('home');
   const now = new Date();
-  const todayName = PROGRAM.days[now.getDay()];
+  const prog = programFor(today());
+  const todayName = prog.days[now.getDay()];
   const recs = Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).sort((a, b) => b.date.localeCompare(a.date));
   const ws = weekStart();
   const weekDone = recs.filter(r => r.date >= ws).length;
@@ -421,7 +439,7 @@ function viewHome() {
     ? h('div', { class: 'card' },
       h('div', { class: 'sub' }, `Aujourd'hui, ${JOURS[now.getDay()]}`),
       h('h1', {}, todayName),
-      h('div', { class: 'sub' }, `${PROGRAM.sessions[todayName].length} exercices${todayRec ? ` · ${setsDone(todayRec)} séries faites` : ''}`),
+      h('div', { class: 'sub' }, `${prog.sessions[todayName].length} exercices${todayRec ? ` · ${setsDone(todayRec)} séries faites` : ''}`),
       h('div', { style: 'height:12px' }),
       h('a', { class: 'btn', href: `#/seance/${encodeURIComponent(todayName)}/${today()}` }, todayRec ? 'Reprendre la séance' : 'Commencer la séance'))
     : h('div', { class: 'card' },
@@ -433,23 +451,26 @@ function viewHome() {
     h('div', { class: 'row between' }, h('h1', {}, 'Muscu'), syncChip()),
     hero,
     h('h2', {}, 'Autre séance'),
-    h('div', { class: 'grid2' }, Object.keys(PROGRAM.sessions).map(n =>
+    h('div', { class: 'grid2' }, Object.keys(prog.sessions).map(n =>
       h('a', { class: 'btn secondary', href: `#/seance/${encodeURIComponent(n)}/${today()}` }, n))),
     h('div', { class: 'grid2' },
-      h('div', { class: 'card' }, h('div', { class: 'sub' }, 'Cette semaine'), h('div', { class: 'big' }, `${weekDone}/4`), h('div', { class: 'sub' }, 'séances')),
+      h('div', { class: 'card' }, h('div', { class: 'sub' }, 'Cette semaine'), h('div', { class: 'big' }, `${weekDone}/${Object.values(prog.days).filter(Boolean).length}`), h('div', { class: 'sub' }, 'séances')),
       h('div', { class: 'card' }, h('div', { class: 'sub' }, 'Poids'), h('div', { class: 'big' }, body[0]?.poids != null ? fmtKg(body[0].poids) : '–'), h('div', { class: 'sub' }, body[0] ? `kg, ${fmtDate(body[0].date)}` : 'à saisir dans Corps'))),
     h('h2', {}, 'Dernières séances'),
     recs.length ? h('div', { class: 'card' }, recs.slice(0, 6).map(r => h('a', { class: 'list-item', href: `#/seance/${encodeURIComponent(r.name)}/${r.date}` },
       h('span', {}, `${cap(fmtDateLong(r.date))}, ${r.name}`),
-      h('span', { class: 'sub' }, `${r.clock?.start ? fmtMin(sessionDuration(r)) + ' · ' : ''}${setsDone(r)} série${setsDone(r) > 1 ? 's' : ''} ·${sessionVolume(r).toLocaleString('fr-FR')} kg`)))) : h('p', { class: 'muted' }, 'Aucune séance enregistrée pour l\'instant.'));
+      h('span', { class: 'sub' }, `${r.clock?.start ? fmtMin(sessionDuration(r)) + ' · ' : ''}${setsDone(r)} série${setsDone(r) > 1 ? 's' : ''} · ${sessionVolume(r).toLocaleString('fr-FR')} kg`)))) : h('p', { class: 'muted' }, 'Aucune séance enregistrée pour l\'instant.'));
 }
 
 function viewSession(name, date) {
   setTab('home');
-  const list = PROGRAM.sessions[name];
-  if (!list) return go('#/');
-  keepAwake();
   const id = sessionId(date, name);
+  // Exercices du programme actif à la date de la séance, plus ceux déjà saisis qui n'y sont plus (séance commencée avant un changement).
+  const planned = programFor(date).sessions[name] || [];
+  const extra = Object.keys(db.sessions[id]?.entries || {}).filter(x => !planned.some(e => e.id === x) && EXERCISES[x]).map(x => EXERCISES[x]);
+  const list = [...planned, ...extra];
+  if (!list.length) return go('#/');
+  keepAwake();
   const rec = db.sessions[id];
   const total = list.reduce((n, ex) => n + ex.sets, 0);
   const sugs = Object.fromEntries(list.map(ex => [ex.id, suggest(ex, id)]));
@@ -556,7 +577,7 @@ function viewSession(name, date) {
     done && !ended ? h('button', { class: 'btn end', style: 'margin-top:12px', onclick: finish }, '✓ Terminer la séance · ', h('span', { 'data-clock': id }, fmtClock(sessionDuration(rec)))) : null,
     ended ? h('div', { class: 'card', style: 'text-align:center;margin-top:12px' },
       h('b', {}, 'Séance terminée'),
-      h('div', { class: 'sub' }, `${fmtMin(sessionDuration(rec))} · ${done} série${done > 1 ? 's' : ''} ·${fmtHour(c.start)} → ${fmtHour(c.end)}`),
+      h('div', { class: 'sub' }, `${fmtMin(sessionDuration(rec))} · ${done} série${done > 1 ? 's' : ''} · ${fmtHour(c.start)} → ${fmtHour(c.end)}`),
       h('div', { style: 'height:10px' }),
       h('a', { class: 'btn secondary', href: '#/' }, 'Retour à l\'accueil')) : null);
 }
@@ -802,6 +823,21 @@ const merge = (local, remote) => ({
   body: mergeColl(local.body, remote?.body),
 });
 
+// Programme : lecture seule de programs.json (écrit par le dashboard PC, à côté du fichier de données).
+// Renvoie true si une nouvelle version est arrivée. Un échec ici ne fait pas échouer la synchro des séances.
+async function pullPrograms() {
+  try {
+    const url = ghUrl().replace(/[^/]+$/, 'programs.json');
+    const r = await ghFetch(url, { headers: ghHeaders(), cache: 'no-store' });
+    if (r.status === 404 || !r.ok) return false;
+    const j = await r.json();
+    const p = JSON.parse(decodeURIComponent(escape(atob(j.content.replace(/\n/g, '')))));
+    if (!Array.isArray(p.versions) || JSON.stringify(p.versions) === JSON.stringify(programs?.versions)) return false;
+    programs = { versions: p.versions }; store(PKEY, programs); fillExercises();
+    slog(`Programme reçu : ${programFor(today()).label}`);
+    return true;
+  } catch (e) { slog(`Programme non lu : ${e.message}`); return false; }
+}
 async function syncNow(manual) {
   const isManual = manual === true;
   slog(isManual ? 'Appui sur « Synchroniser maintenant »' : 'Synchro automatique');
@@ -823,6 +859,7 @@ async function syncNow(manual) {
         break;
       } catch (e) { if (!e.conflict || attempt) throw e; }
     }
+    if (await pullPrograms()) localChanged = true;
     sync.state = 'ok'; const d = new Date(); sync.at = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; sync.msg = '';
     const nS = Object.values(db.sessions).filter(r => !r.deleted).length, nB = Object.values(db.body).filter(b => !b.deleted).length;
     sync.info = `${nS} séance${nS > 1 ? 's' : ''} et ${nB} mesure${nB > 1 ? 's' : ''} sur GitHub.`;
@@ -881,6 +918,7 @@ function viewSettings() {
       h('p', { class: 'sub' }, 'Dans Safari : bouton Partager, puis « Sur l\'écran d\'accueil ». L\'appli s\'ouvrira ensuite en plein écran et fonctionnera sans réseau.')],
     h('h2', {}, 'À propos'),
     h('p', { class: 'sub' }, `Version ${APP_VERSION}`),
+    h('p', { class: 'sub' }, (p => `${p.label}${p.from ? ` · depuis le ${fmtDate(p.from)}` : ''}`)(programFor(today()))),
     h('p', { class: 'sub' }, `Double progression : quand toutes les séries atteignent le haut de la fourchette de reps, l'appli propose de monter la charge. ${Object.keys(db.sessions).length} séances et ${Object.keys(db.body).length} mesures enregistrées.`));
 }
 // Connexion GitHub : champs modifiables au premier réglage ou après « Modifier la connexion », sinon résumé en lecture seule.
