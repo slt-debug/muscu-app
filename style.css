@@ -121,3 +121,13 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .sync-line { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--field); font-size: 14px; color: var(--ink-2); }
 .sync-line.ok { color: var(--good); font-weight: 600; }
 .sync-line.err { color: var(--bad); font-weight: 600; }
+.btn { transition: transform .08s ease, filter .08s ease, background-color .2s ease; }
+.btn:active { transform: scale(.96); filter: brightness(.82); }
+.btn.pressed { animation: press .5s ease; }
+@keyframes press { 0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); } 35% { transform: scale(.94); } 100% { transform: scale(1); box-shadow: 0 0 0 14px transparent; } }
+.btn.busy::before { content: ''; display: inline-block; width: 14px; height: 14px; margin-right: 10px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -2px; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.btn.busy:disabled { opacity: .85; }
+.btn.success, .btn.success:disabled { background: var(--good); color: #fff; }
+.btn.fail, .btn.fail:disabled { background: var(--bad); color: #fff; }
+@media (prefers-reduced-motion: reduce) { .btn.pressed, .btn.busy::before { animation: none; } }

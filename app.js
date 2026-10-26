@@ -2,6 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
+const APP_VERSION = '4 (animation du bouton de synchro)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -464,7 +465,14 @@ function refreshChips() {
   const line = document.getElementById('sync-line');
   if (line) { line.textContent = syncMessage(); line.className = 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''); }
   const btn = document.getElementById('sync-btn');
-  if (btn) { btn.disabled = sync.state === 'busy'; btn.textContent = sync.state === 'busy' ? 'Synchronisation…' : 'Synchroniser maintenant'; }
+  if (btn) {
+    const busy = sync.state === 'busy', flash = Date.now() < (sync.flashUntil || 0);
+    btn.disabled = busy;
+    btn.classList.toggle('busy', busy);
+    btn.classList.toggle('success', !busy && flash && sync.state === 'ok');
+    btn.classList.toggle('fail', !busy && flash && sync.state === 'err');
+    btn.textContent = busy ? 'Synchronisation…' : flash && sync.state === 'ok' ? '✓ Synchronisé' : flash && sync.state === 'err' ? '✕ Échec' : 'Synchroniser maintenant';
+  }
 }
 function scheduleSync() {
   if (!cfgOk()) return;
@@ -527,7 +535,9 @@ async function syncNow(manual) {
     const nS = Object.values(db.sessions).filter(r => !r.deleted).length, nB = Object.values(db.body).filter(b => !b.deleted).length;
     sync.info = `${nS} séance${nS > 1 ? 's' : ''} et ${nB} mesure${nB > 1 ? 's' : ''} sur GitHub.`;
   } catch (e) { sync.state = 'err'; sync.msg = String(e.message || e); }
-  syncing = false; refreshChips();
+  syncing = false;
+  if (manual === true) { sync.flashUntil = Date.now() + 2000; setTimeout(refreshChips, 2100); }
+  refreshChips();
   // Des données distantes sont arrivées : on redessine les vues de lecture (pas la séance en cours de saisie).
   const readOnlyView = ['', '#/', '#/historique'].includes(location.hash) || location.hash.startsWith('#/ex/');
   if (localChanged && readOnlyView) render();
@@ -574,13 +584,19 @@ function viewSettings() {
       f('repo', 'Dépôt de données (privé)', 'text', 'muscu-data'),
       f('path', 'Fichier', 'text', 'data.json'),
       f('token', 'Jeton d\'accès (fine-grained)', 'password'),
-      h('button', { class: 'btn', id: 'sync-btn', onclick: () => {
-        // On relit les champs ici : sur iPhone l'événement « change » peut ne pas être parti avant le toucher.
-        for (const [k, inp] of Object.entries(fieldInputs)) cfg[k] = inp.value.trim();
-        store(SKEY, cfg);
-        sync.state = cfgOk() ? 'idle' : 'off';
-        if (!cfgOk()) { refreshChips(); return; }
-        syncNow(true);
+      h('button', { class: 'btn', id: 'sync-btn', onclick: (ev) => {
+        // Retour immédiat à l'appui : l'animation et la vibration partent avant tout le reste.
+        const b = ev.currentTarget;
+        b.classList.remove('pressed'); void b.offsetWidth; b.classList.add('pressed');
+        try { navigator.vibrate?.(30); } catch { /* iOS ne vibre pas */ }
+        try {
+          // On relit les champs ici : sur iPhone l'événement « change » peut ne pas être parti avant le toucher.
+          for (const [k, inp] of Object.entries(fieldInputs)) cfg[k] = inp.value.trim();
+          store(SKEY, cfg);
+          sync.state = cfgOk() ? 'idle' : 'off';
+          if (!cfgOk()) { sync.flashUntil = Date.now() + 2000; sync.state = 'off'; refreshChips(); return; }
+          syncNow(true);
+        } catch (e) { sync.state = 'err'; sync.msg = String(e.message || e); sync.flashUntil = Date.now() + 2000; refreshChips(); }
       } }, 'Synchroniser maintenant'),
       h('div', { class: 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), id: 'sync-line', role: 'status' }, syncMessage())),
     h('h2', {}, 'Sauvegarde'),
@@ -592,6 +608,7 @@ function viewSettings() {
     standalone ? null : [h('h2', {}, 'Installer sur l\'iPhone'),
       h('p', { class: 'sub' }, 'Dans Safari : bouton Partager, puis « Sur l\'écran d\'accueil ». L\'appli s\'ouvrira ensuite en plein écran et fonctionnera sans réseau.')],
     h('h2', {}, 'À propos'),
+    h('p', { class: 'sub' }, `Version ${APP_VERSION}`),
     h('p', { class: 'sub' }, `Double progression : quand toutes les séries atteignent le haut de la fourchette de reps, l'appli propose de monter la charge. ${Object.keys(db.sessions).length} séances et ${Object.keys(db.body).length} mesures enregistrées.`));
 }
 
