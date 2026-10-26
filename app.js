@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '20 (programme modifiable)';
+const APP_VERSION = '21 (cardio sans minuteur)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -521,7 +521,7 @@ function viewSession(name, date) {
             if (k.pausedAt) { k.pauseMs += now - k.pausedAt; k.pausedAt = null; }
             k.end = null;
           });
-          startTimer(ex.rest, ex.name, id);
+          if (ex.rest > 0) startTimer(ex.rest, ex.name, id); // cardio : pas de repos, pas de minuteur
           if (doneSets(entry).length >= entry.sets.length) {
             const idx = list.indexOf(ex);
             const nxt = list.slice(idx + 1).find(e => doneSets(db.sessions[id]?.entries?.[e.id]).length < e.sets);
