@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '16 (voix)';
+const APP_VERSION = '17 (réglages du repos)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -267,6 +267,7 @@ function renderTimer() {
   timerEl.className = left <= 10 ? 'warn' : '';
   timerEl.replaceChildren(
     h('div', { class: 't' }, `${Math.floor(left / 60)}:${pad2(left % 60)}`),
+    h('button', { class: 'gear', 'aria-label': 'Réglages du minuteur', onclick: openRestSheet }, gearIcon()),
     h('button', { onclick: addTimer30 }, '+30 s'),
     h('button', { onclick: stopTimer }, 'Stop'));
 }
@@ -775,41 +776,12 @@ function viewSettings() {
     } catch { alert('Fichier invalide.'); }
   });
   const standalone = window.navigator.standalone || matchMedia('(display-mode: standalone)').matches;
-  const soundHelp = h('p', { class: 'sub' }, SOUND_HELP[cfg.sound]);
-  const soundBtns = Object.entries(SOUND_PROFILES).map(([k, label]) => h('button', {
-    type: 'button', role: 'radio', 'data-k': k,
-    onclick: () => {
-      cfg.sound = k; store(SKEY, cfg);
-      // Aperçu : on fait entendre le signal de fin, sauf si le son est désactivé.
-      unlockAudio(); if (k !== 'off') SOUNDS.end();
-      paintSound();
-    } }, label));
-  const paintSound = () => {
-    soundHelp.textContent = SOUND_HELP[cfg.sound];
-    for (const b of soundBtns) { const on = b.dataset.k === cfg.sound; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
-  };
-  paintSound();
-  const timbreHelp = h('p', { class: 'sub' }, timbre().help);
-  const timbreBtns = Object.entries(TIMBRES).map(([k, t]) => h('button', {
-    type: 'button', role: 'radio', 'data-k': k,
-    onclick: () => {
-      cfg.timbre = k; store(SKEY, cfg);
-      previewSound();
-      paintTimbre();
-    } }, t.label));
-  const paintTimbre = () => {
-    timbreHelp.textContent = timbre().help;
-    for (const b of timbreBtns) { const on = TIMBRES[b.dataset.k] === timbre(); b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
-  };
-  paintTimbre();
-  const audioLine = h('p', { class: 'sub', role: 'status' }, audioState());
-  const volLabel = h('span', {}, `Volume : ${Math.round(cfg.volume * 100)} %`);
-  const volIn = h('input', { type: 'range', min: '10', max: '100', step: '5', value: String(Math.round(cfg.volume * 100)) });
-  volIn.addEventListener('input', () => { cfg.volume = volIn.value / 100; volLabel.textContent = `Volume : ${volIn.value} %`; });
-  // Au relâchement du curseur : on enregistre et on fait entendre le signal de fin au nouveau volume.
-  volIn.addEventListener('change', () => { store(SKEY, cfg); unlockAudio(); SOUNDS.end(); });
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Réglages'), syncChip()),
+    h('a', { class: 'navrow', href: '#/repos' },
+      h('span', { class: 'ic' }, timerIcon()),
+      h('span', {}, h('b', {}, 'Minuteur de repos'), h('small', {}, restSummary())),
+      h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')),
     h('h2', {}, 'Synchronisation GitHub'),
     h('p', { class: 'sub' }, 'Tes données sont enregistrées sur le téléphone, puis copiées dans un dépôt GitHub privé pour les retrouver sur ton PC.'),
     h('div', { class: 'card' },
@@ -835,19 +807,6 @@ function viewSettings() {
       h('div', { class: 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), id: 'sync-line', role: 'status' }, syncMessage()),
       h('details', { open: true }, h('summary', { class: 'sub' }, 'Journal de la synchro'),
         h('pre', { id: 'sync-log', class: 'sync-log' }, sync.log.length ? sync.log.join('\n') : 'Aucune tentative pour l\'instant.'))),
-    h('h2', {}, 'Signaux de repos'),
-    soundHelp,
-    h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Signaux de repos' }, soundBtns),
-    h('h3', { class: 'sub3' }, 'Son'),
-    timbreHelp,
-    h('div', { class: 'seg seg3', role: 'radiogroup', 'aria-label': 'Son des signaux' }, timbreBtns),
-    h('label', { class: 'vol' }, volLabel, volIn),
-    h('button', { class: 'btn secondary', onclick: () => {
-      previewSound();
-      // L'état se lit après un court délai, le temps que le contexte audio démarre.
-      setTimeout(() => { audioLine.textContent = audioState(); }, 400);
-    } }, 'Tester le son'),
-    audioLine,
     h('h2', {}, 'Sauvegarde'),
     h('div', { class: 'grid2' },
       h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.json`, JSON.stringify(db, null, 1), 'application/json') }, 'Exporter JSON'),
@@ -862,6 +821,72 @@ function viewSettings() {
   refreshChips(); // aligne le bouton sur l'état réel (par exemple une synchro déjà en cours)
 }
 
+// ---------- Réglages du minuteur de repos (page dédiée et volet ouvert depuis le minuteur) ----------
+const timerIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('circle', { cx: 12, cy: 13, r: 8 }), s('path', { d: 'M12 9v4l2.5 2M9 2h6' }));
+// Icône « curseurs de réglage » (trois glissières)
+const gearIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('path', { d: 'M3 6h11M18 6h3M3 12h4M11 12h10M3 18h13M20 18h1' }),
+  s('circle', { cx: 16, cy: 6, r: 2 }), s('circle', { cx: 9, cy: 12, r: 2 }), s('circle', { cx: 18, cy: 18, r: 2 }));
+function restSummary() {
+  return cfg.sound === 'off' ? 'Désactivé' : `${SOUND_PROFILES[cfg.sound]} · ${timbre().label} · ${Math.round(cfg.volume * 100)} %`;
+}
+// compact = volet du minuteur : pas de textes d'aide ni de test, pour tenir sur un écran.
+function restControls(compact = false) {
+  const radios = (entries, isOn, pick, cls) => {
+    const btns = entries.map(([k, label]) => h('button', { type: 'button', role: 'radio', 'data-k': k, onclick: () => { pick(k); paint(); } }, label));
+    const paint = () => { for (const b of btns) { const on = isOn(b.dataset.k); b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); } help(); };
+    return { el: h('div', { class: cls, role: 'radiogroup' }, btns), paint };
+  };
+  const soundHelp = h('p', { class: 'sub' }), timbreHelp = h('p', { class: 'sub' });
+  const help = () => { soundHelp.textContent = SOUND_HELP[cfg.sound]; timbreHelp.textContent = timbre().help; };
+  const profiles = radios(Object.entries(SOUND_PROFILES), k => k === cfg.sound, k => {
+    cfg.sound = k; store(SKEY, cfg);
+    // Aperçu : on fait entendre le signal de fin, sauf si le son est désactivé.
+    unlockAudio(); if (k !== 'off') SOUNDS.end();
+  }, 'seg');
+  const timbres = radios(Object.entries(TIMBRES).map(([k, t]) => [k, t.label]), k => TIMBRES[k] === timbre(), k => {
+    cfg.timbre = k; store(SKEY, cfg); previewSound();
+  }, 'seg seg3');
+  profiles.paint(); timbres.paint();
+  const volLabel = h('span', {}, `Volume : ${Math.round(cfg.volume * 100)} %`);
+  const volIn = h('input', { type: 'range', min: '10', max: '100', step: '5', value: String(Math.round(cfg.volume * 100)) });
+  volIn.addEventListener('input', () => { cfg.volume = volIn.value / 100; volLabel.textContent = `Volume : ${volIn.value} %`; });
+  // Au relâchement du curseur : on enregistre et on fait entendre le signal de fin au nouveau volume.
+  volIn.addEventListener('change', () => { store(SKEY, cfg); unlockAudio(); SOUNDS.end(); });
+  const audioLine = h('p', { class: 'sub', role: 'status' }, audioState());
+  return [
+    h('h3', { class: 'sub3' }, 'Signaux'), compact ? null : soundHelp, profiles.el,
+    h('h3', { class: 'sub3' }, 'Son'), compact ? null : timbreHelp, timbres.el,
+    h('label', { class: 'vol' }, volLabel, volIn),
+    compact ? null : [
+      h('button', { class: 'btn secondary', onclick: () => {
+        previewSound();
+        // L'état se lit après un court délai, le temps que le contexte audio démarre.
+        setTimeout(() => { audioLine.textContent = audioState(); }, 400);
+      } }, 'Tester le son'),
+      audioLine],
+  ];
+}
+function viewRest() {
+  setTab('set');
+  mount(
+    h('a', { class: 'back', href: '#/reglages' }, '‹ Réglages'),
+    h('h1', {}, 'Minuteur de repos'),
+    h('p', { class: 'sub' }, 'Ces réglages s\'ouvrent aussi pendant un repos, avec le bouton de réglage de la barre du minuteur.'),
+    restControls());
+}
+function openRestSheet() {
+  if (document.querySelector('.sheet-wrap')) return;
+  const close = () => wrap.remove();
+  const wrap = h('div', { class: 'sheet-wrap' },
+    h('div', { class: 'dim', onclick: close }),
+    h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Minuteur de repos' },
+      h('span', { class: 'grab', 'aria-hidden': 'true' }),
+      h('h2', { style: 'margin:0' }, 'Minuteur de repos'),
+      restControls(true),
+      h('button', { class: 'btn', onclick: close }, 'OK')));
+  document.body.append(wrap);
+}
+
 // ---------- Routage ----------
 function go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
 function render() {
@@ -873,6 +898,7 @@ function render() {
     case 'ex': return viewExercise(parts[1]);
     case 'corps': return viewBody();
     case 'reglages': return viewSettings();
+    case 'repos': return viewRest();
     default: return viewHome();
   }
 }

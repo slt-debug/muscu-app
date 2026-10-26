@@ -124,6 +124,20 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .seg button { min-height: 44px; border: 0; border-radius: 10px; background: var(--field); color: var(--ink); font-family: inherit; font-size: 15px; font-weight: 600; }
 .seg button.on { background: var(--accent); color: var(--on-accent); }
 .seg3 { grid-template-columns: repeat(3, 1fr); }
+#timer .gear { padding: 0 10px; display: grid; place-items: center; }
+#timer .gear svg, .navrow .ic svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.navrow { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--grid); border-radius: 14px; padding: 12px 14px; margin: 12px 0 4px; color: var(--ink); text-decoration: none; }
+.navrow .ic { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
+.navrow b { display: block; font-size: 16px; }
+.navrow small { color: var(--ink-2); font-size: 13px; }
+.navrow .chev { color: var(--muted); font-size: 24px; line-height: 1; }
+.back { display: inline-block; font-weight: 600; text-decoration: none; padding: 6px 0; }
+.sheet-wrap { position: fixed; inset: 0; z-index: 20; }
+.sheet-wrap .dim { position: absolute; inset: 0; background: rgba(0,0,0,.45); }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; max-width: 640px; margin: 0 auto; max-height: 90vh; overflow-y: auto; background: var(--card); border-radius: 20px 20px 0 0; padding: 10px 16px calc(16px + env(safe-area-inset-bottom)); animation: up .2s ease-out; }
+.sheet .grab { display: block; width: 40px; height: 5px; border-radius: 3px; background: var(--grid); margin: 0 auto 10px; }
+.sheet .sub3 { margin-top: 12px; }
+@keyframes up { from { transform: translateY(100%); } to { transform: none; } }
 .sub3 { font-size: 15px; margin: 18px 0 2px; }
 .vol { display: block; margin: 14px 0 12px; }
 .vol span { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
