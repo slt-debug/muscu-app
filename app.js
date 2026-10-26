@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '15 (choix du son)';
+const APP_VERSION = '16 (voix)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -122,6 +122,7 @@ try { if (navigator.audioSession) navigator.audioSession.type = 'ambient'; } cat
 // Sur iPhone, le son ne part que si le contexte audio a été débloqué pendant un toucher.
 // Après un passage en arrière-plan, il peut rester « running » mais muet : on le recrée au toucher suivant.
 function unlockAudio() {
+  unlockSpeech();
   try {
     if (audioCtx && audioStale) { audioCtx.close().catch(() => {}); audioCtx = null; }
     audioStale = false;
@@ -138,7 +139,9 @@ function audioState() {
   return `Audio : ${s}${navigator.audioSession ? `, session ${navigator.audioSession.type}` : ''}`;
 }
 ['touchend', 'click'].forEach(ev => document.addEventListener(ev, unlockAudio, { passive: true }));
-document.addEventListener('visibilitychange', () => { if (document.hidden) audioStale = true; });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { audioStale = true; speechReady = false; } });
+// Aperçu d'un son : « prépare-toi » à 30 s puis signal de fin (la voix a besoin de plus de temps pour parler).
+function previewSound() { unlockAudio(); SOUNDS.prep(30); setTimeout(() => SOUNDS.end(), cfg.timbre === 'voix' ? 1500 : 600); }
 // tone(fréquence Hz, départ s, durée s, volume, forme d'onde, options)
 // Options : hold = son tenu à plein volume (plus fort qu'un son qui s'éteint), vib = [vitesse Hz, amplitude Hz] pour un trille.
 function tone(freq, at, dur, vol, type = 'sine', { hold = false, vib = null } = {}) {
@@ -190,8 +193,30 @@ const TIMBRES = {
     tick: () => tone(2637, 0, 0.06, 0.45, 'triangle', HOLD),
     end: () => [0, 0.35, 0.7].forEach(d => bell(1047, d, 1.2)) },
 };
+// Voix : synthèse vocale de l'appareil, en français. `left` = secondes restantes du signal.
+let speechReady = false;
+function say(text) {
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'fr-FR'; u.rate = 1.1; u.volume = cfg.volume;
+    const v = speechSynthesis.getVoices().find(x => x.lang === 'fr-FR') || speechSynthesis.getVoices().find(x => x.lang.startsWith('fr'));
+    if (v) u.voice = v;
+    // Une annonce en retard (le « 3 » encore en cours) ne doit pas décaler les suivantes.
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  } catch { /* pas de synthèse vocale */ }
+}
+if ('speechSynthesis' in window) TIMBRES.voix = { label: 'Voix', help: 'Une voix annonce le temps restant : « encore 2 minutes », « 30 secondes », « 3, 2, 1 », « repos terminé ».',
+  min: left => say(left === 60 ? 'Encore 1 minute' : `Encore ${left / 60} minutes`),
+  prep: left => say(`${left} secondes`),
+  tick: left => say(String(left)),
+  end: () => say('Repos terminé') };
+// Sur iPhone, la voix doit avoir parlé une première fois pendant un toucher pour pouvoir parler ensuite.
+function unlockSpeech() {
+  if (speechReady || cfg.timbre !== 'voix' || !('speechSynthesis' in window)) return;
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); speechReady = true; } catch { /* ignoré */ }
+}
 const timbre = () => TIMBRES[cfg.timbre] || TIMBRES.alarme;
-const SOUNDS = { min: () => timbre().min(), prep: () => timbre().prep(), tick: () => timbre().tick(), end: () => timbre().end() };
+const SOUNDS = { min: left => timbre().min(left), prep: left => timbre().prep(left), tick: left => timbre().tick(left), end: () => timbre().end() };
 const SOUND_PROFILES = { off: 'Désactivé', discret: 'Discret', standard: 'Standard', complet: 'Complet' };
 const SOUND_HELP = {
   off: 'Aucun son. La barre passe quand même à l\'orange les 10 dernières secondes.',
@@ -225,7 +250,7 @@ function tickTimer() {
     if (timer.played.has(key) || exact > e.left) continue;
     timer.played.add(key);
     // Au retour d'arrière-plan, on ne rejoue pas d'un coup les signaux manqués, sauf la fin.
-    if (e.kind === 'end' || exact > e.left - 1.5) SOUNDS[e.kind]();
+    if (e.kind === 'end' || exact > e.left - 1.5) SOUNDS[e.kind](e.left);
   }
   const left = Math.ceil(exact);
   if (timer.shown !== left) { timer.shown = left; renderTimer(); }
@@ -769,8 +794,7 @@ function viewSettings() {
     type: 'button', role: 'radio', 'data-k': k,
     onclick: () => {
       cfg.timbre = k; store(SKEY, cfg);
-      // Aperçu : double bip puis signal de fin du son choisi.
-      unlockAudio(); SOUNDS.prep(); setTimeout(() => SOUNDS.end(), 600);
+      previewSound();
       paintTimbre();
     } }, t.label));
   const paintTimbre = () => {
@@ -819,7 +843,7 @@ function viewSettings() {
     h('div', { class: 'seg seg3', role: 'radiogroup', 'aria-label': 'Son des signaux' }, timbreBtns),
     h('label', { class: 'vol' }, volLabel, volIn),
     h('button', { class: 'btn secondary', onclick: () => {
-      unlockAudio(); SOUNDS.prep(); setTimeout(() => SOUNDS.end(), 600);
+      previewSound();
       // L'état se lit après un court délai, le temps que le contexte audio démarre.
       setTimeout(() => { audioLine.textContent = audioState(); }, 400);
     } }, 'Tester le son'),
