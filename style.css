@@ -132,3 +132,19 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .btn.fail, .btn.fail:disabled { background: var(--bad); color: #fff; }
 @media (prefers-reduced-motion: reduce) { .btn.pressed, .btn.busy::before { animation: none; } }
 .sync-log { margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--field); color: var(--ink-2); font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; max-height: 180px; overflow: auto; }
+
+/* Flèches de jugement de la charge (Léger / Lourd) */
+.btn.small.tight { padding: 0 10px; font-size: 13px; height: 40px; min-height: 40px; display: inline-flex; align-items: center; white-space: nowrap; }
+.ico { --c: var(--good); display: grid; justify-items: center; gap: 3px; flex: none; border: 0; background: none; padding: 0; color: var(--muted); font: inherit; cursor: pointer; }
+.ico.down { --c: var(--bad); }
+.ico.on { color: var(--c); }
+.ico .face { position: relative; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; background: var(--field); transition: background-color .15s; }
+.ico.on .face { background: color-mix(in srgb, var(--c) 22%, transparent); }
+.ico svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.ico small { font-size: 10px; line-height: 1; color: var(--muted); }
+.ico.on small { color: var(--c); font-weight: 700; }
+.ico .face::after { content: ""; position: absolute; top: -5px; right: -5px; width: 16px; height: 16px; border-radius: 50%; background: var(--c) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.5l2.7 2.7L12 5.5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 100% no-repeat; border: 2px solid var(--card); box-sizing: content-box; transform: scale(0); transition: transform .15s; }
+.ico.on .face::after { transform: scale(1); }
+.tag.up { color: var(--good); font-weight: 600; }
+.tag.down { color: var(--bad); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .ico .face, .ico .face::after { transition: none; } }

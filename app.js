@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '9 (Upper / Lower)';
+const APP_VERSION = '10 (flèches de charge)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -63,7 +63,7 @@ function history(exId, excludeId) {
   return Object.values(db.sessions)
     .filter(r => !r.deleted && r.id !== excludeId && r.entries?.[exId])
     .sort((a, b) => a.date.localeCompare(b.date))
-    .map(r => ({ date: r.date, sets: doneSets(r.entries[exId]) }))
+    .map(r => ({ date: r.date, sets: doneSets(r.entries[exId]), load: r.entries[exId].load || null }))
     .filter(x => x.sets.length);
 }
 function bestE1rm(sets) {
@@ -80,7 +80,8 @@ function suggest(ex, excludeId) {
   const top = Math.max(...last.sets.map(x => x.kg));
   const atTop = last.sets.filter(x => x.kg === top);
   const full = atTop.length >= ex.sets && atTop.every(x => x.reps >= ex.hi);
-  const summary = `${fmtDate(last.date)} : ${fmtKg(top)} kg × ${atTop.map(x => x.reps).join(', ')}`;
+  const verdict = last.load === 'up' ? ' (jugée trop légère)' : last.load === 'down' ? ' (jugée trop lourde)' : '';
+  const summary = `${fmtDate(last.date)} : ${fmtKg(top)} kg × ${atTop.map(x => x.reps).join(', ')}${verdict}`;
   if (full) {
     return { kg: top + ex.step, reps: ex.lo, text: `${summary}. Objectif : monter à ${fmtKg(top + ex.step)} kg.` };
   }
@@ -342,10 +343,15 @@ function viewSession(name, date) {
         h('div', { class: 'stepper' }, h('button', { onclick: bump(repIn, 'reps', -1, 0) }, '−'), repIn, h('button', { onclick: bump(repIn, 'reps', 1, 0) }, '+')),
         rir, chk));
     });
-    card.append(h('div', { class: 'row', style: 'margin-top:8px' },
-      h('button', { class: 'btn secondary small', onclick: () => { const last = entry.sets[entry.sets.length - 1]; entry.sets.push({ kg: last?.kg ?? null, reps: last?.reps ?? null, rir: '', done: false }); commit(date, name, ex, entry); redraw(); } }, '+ Série'),
-      entry.sets.length > 1 ? h('button', { class: 'btn secondary small', onclick: () => { entry.sets.pop(); commit(date, name, ex, entry); redraw(); } }, '− Série') : null,
-      h('a', { class: 'btn secondary small', href: `#/ex/${ex.id}` }, 'Historique')));
+    // Jugement de la charge : une seule flèche cochée à la fois, on la décoche en la touchant de nouveau. Aucun effet sur les charges proposées.
+    const mark = kind => () => { entry.load = entry.load === kind ? null : kind; commit(date, name, ex, entry); redraw(); };
+    card.append(h('div', { class: 'row', style: 'margin-top:8px;gap:6px;flex-wrap:wrap;align-items:flex-start' },
+      h('button', { class: 'btn secondary small tight', onclick: () => { const last = entry.sets[entry.sets.length - 1]; entry.sets.push({ kg: last?.kg ?? null, reps: last?.reps ?? null, rir: '', done: false }); commit(date, name, ex, entry); redraw(); } }, '+ Série'),
+      entry.sets.length > 1 ? h('button', { class: 'btn secondary small tight', onclick: () => { entry.sets.pop(); commit(date, name, ex, entry); redraw(); } }, '− Série') : null,
+      h('a', { class: 'btn secondary small tight', href: `#/ex/${ex.id}` }, 'Historique'),
+      h('span', { style: 'flex:1' }),
+      loadIcon('up', entry.load === 'up', mark('up')),
+      loadIcon('down', entry.load === 'down', mark('down'))));
     return card;
   });
 
@@ -357,6 +363,15 @@ function viewSession(name, date) {
     cards,
     done ? h('a', { class: 'btn', href: '#/', style: 'margin-top:12px' }, 'Terminer la séance') : null);
 }
+
+// Flèche de jugement de la charge (style « teinte douce avec légende »).
+function loadIcon(kind, on, onclick) {
+  const up = kind === 'up';
+  const svg = s('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' }, s('path', { d: up ? 'M12 19V5M5.5 11.5 12 5l6.5 6.5' : 'M12 5v14M5.5 12.5 12 19l6.5-6.5' }));
+  return h('button', { type: 'button', class: `ico ${kind}${on ? ' on' : ''}`, 'aria-pressed': on ? 'true' : 'false', 'aria-label': up ? 'Charge trop légère' : 'Charge trop lourde', onclick },
+    h('span', { class: 'face' }, svg), h('small', {}, up ? 'Léger' : 'Lourd'));
+}
+const loadTag = l => l === 'up' ? h('span', { class: 'tag up' }, '↑ Légère') : l === 'down' ? h('span', { class: 'tag down' }, '↓ Lourde') : '–';
 
 function viewHistory() {
   setTab('hist');
@@ -383,8 +398,8 @@ function viewExercise(exId) {
     h('div', { class: 'sub' }, '1RM estimé par séance (formule d\'Epley, meilleure série)'),
     pts.length ? lineChart([{ name: '1RM estimé', points: pts }], 'kg') : h('p', { class: 'muted' }, hist.length ? 'Exercice au poids du corps : pas de courbe de 1RM.' : 'Pas encore de données.'),
     h('details', { open: true }, h('summary', {}, 'Détail des séances'),
-      h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'Séries (kg × reps)')),
-        [...hist].reverse().map(x => h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, x.sets.map(s2 => `${fmtKg(s2.kg)}×${s2.reps}`).join('  ')))))));
+      h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'Séries (kg × reps)'), h('th', {}, 'Charge')),
+        [...hist].reverse().map(x => h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, x.sets.map(s2 => `${fmtKg(s2.kg)}×${s2.reps}`).join('  ')), h('td', {}, loadTag(x.load)))))));
 }
 
 // Mensurations suivies en plus du poids. La clé est celle stockée dans data.json.
@@ -620,10 +635,10 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 function toCsv() {
-  const lines = ['date;seance;exercice;serie;kg;reps;reserve'];
+  const lines = ['date;seance;exercice;serie;kg;reps;reserve;charge'];
   for (const r of Object.values(db.sessions).filter(x => !x.deleted).sort((a, b) => a.date.localeCompare(b.date))) {
     for (const [exId, e] of Object.entries(r.entries || {})) {
-      doneSets(e).forEach((x, i) => lines.push([r.date, r.name, EXERCISES[exId]?.name || exId, i + 1, String(x.kg).replace('.', ','), x.reps, x.rir].join(';')));
+      doneSets(e).forEach((x, i) => lines.push([r.date, r.name, EXERCISES[exId]?.name || exId, i + 1, String(x.kg).replace('.', ','), x.reps, x.rir, e.load === 'up' ? 'trop legere' : e.load === 'down' ? 'trop lourde' : ''].join(';')));
     }
   }
   return lines.join('\n');
