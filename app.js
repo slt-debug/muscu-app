@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '14 (volume réglable)';
+const APP_VERSION = '15 (choix du son)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -49,7 +49,7 @@ function load(key, fallback) {
 }
 function store(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* stockage indisponible */ } }
 let db = Object.assign({ sessions: {}, body: {} }, load(KEY, {}));
-let cfg = Object.assign({ owner: '', repo: '', path: 'data.json', token: '', sound: 'complet', volume: 1 }, load(SKEY, {}));
+let cfg = Object.assign({ owner: '', repo: '', path: 'data.json', token: '', sound: 'complet', volume: 1, timbre: 'alarme' }, load(SKEY, {}));
 function save() { store(KEY, db); scheduleSync(); }
 
 const EXERCISES = {};
@@ -139,28 +139,65 @@ function audioState() {
 }
 ['touchend', 'click'].forEach(ev => document.addEventListener(ev, unlockAudio, { passive: true }));
 document.addEventListener('visibilitychange', () => { if (document.hidden) audioStale = true; });
-// tone(fréquence Hz, départ s, durée s, volume)
-function tone(freq, at, dur, vol, type = 'sine') {
+// tone(fréquence Hz, départ s, durée s, volume, forme d'onde, options)
+// Options : hold = son tenu à plein volume (plus fort qu'un son qui s'éteint), vib = [vitesse Hz, amplitude Hz] pour un trille.
+function tone(freq, at, dur, vol, type = 'sine', { hold = false, vib = null } = {}) {
   if (!audioCtx) return;
   const o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = audioCtx.currentTime + at;
   o.type = type; o.frequency.value = freq; o.connect(g); g.connect(audioCtx.destination);
   // Le son le plus fort (0,45) atteint le maximum quand le curseur de volume est à 100 %.
   const peak = Math.min(1, Math.max(0.0002, vol / 0.45 * cfg.volume));
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.01);
+  if (hold) { g.gain.setValueAtTime(peak, t + Math.max(0.01, dur - 0.02)); g.gain.linearRampToValueAtTime(0.0001, t + dur); }
+  else g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  if (vib) {
+    const lfo = audioCtx.createOscillator(), depth = audioCtx.createGain();
+    lfo.frequency.value = vib[0]; depth.gain.value = vib[1]; lfo.connect(depth); depth.connect(o.frequency);
+    lfo.start(t); lfo.stop(t + dur + 0.02);
+  }
   o.start(t); o.stop(t + dur + 0.02);
 }
-const SOUNDS = {
-  min: () => tone(520, 0, 0.18, 0.3),
-  prep: () => { tone(660, 0, 0.16, 0.3); tone(660, 0.22, 0.16, 0.3); },
-  tick: () => tone(1200, 0, 0.06, 0.35, 'triangle'),
-  end: () => { tone(880, 0, 0.16, 0.4); tone(988, 0.2, 0.16, 0.4); tone(1320, 0.4, 0.5, 0.45); },
+// Coup de cloche : partiels inharmoniques qui s'éteignent lentement, comme une cloche de ring.
+function bell(freq, at, dur) {
+  [[1, 0.2], [2, 0.11], [2.76, 0.09], [5.4, 0.05]].forEach(([m, v]) => tone(freq * m, at, dur / Math.sqrt(m), v));
+}
+const HOLD = { hold: true };
+// Chaque son définit les 4 signaux : minute, prépare-toi, top 3-2-1, fin.
+const TIMBRES = {
+  doux: { label: 'Doux', help: 'Bips ronds et graves, les plus discrets.',
+    min: () => tone(520, 0, 0.18, 0.3),
+    prep: () => { tone(660, 0, 0.16, 0.3); tone(660, 0.22, 0.16, 0.3); },
+    tick: () => tone(1200, 0, 0.06, 0.35, 'triangle'),
+    end: () => { tone(880, 0, 0.16, 0.4); tone(988, 0.2, 0.16, 0.4); tone(1320, 0.4, 0.5, 0.45); } },
+  clair: { label: 'Clair', help: 'Bips aigus et tenus, dans la zone où le haut-parleur de l\'iPhone porte le mieux.',
+    min: () => tone(1568, 0, 0.15, 0.45, 'triangle', HOLD),
+    prep: () => { tone(1976, 0, 0.13, 0.45, 'triangle', HOLD); tone(1976, 0.2, 0.13, 0.45, 'triangle', HOLD); },
+    tick: () => tone(2637, 0, 0.05, 0.45, 'triangle', HOLD),
+    end: () => { tone(1568, 0, 0.15, 0.45, 'triangle', HOLD); tone(1976, 0.18, 0.15, 0.45, 'triangle', HOLD); tone(2637, 0.36, 0.45, 0.45, 'triangle', HOLD); } },
+  alarme: { label: 'Alarme', help: 'Bip de montre digitale, sec et perçant. Le plus audible dans une salle bruyante.',
+    min: () => tone(2730, 0, 0.12, 0.45, 'square', HOLD),
+    prep: () => { tone(2730, 0, 0.1, 0.45, 'square', HOLD); tone(2730, 0.16, 0.1, 0.45, 'square', HOLD); },
+    tick: () => tone(2730, 0, 0.04, 0.45, 'square', HOLD),
+    end: () => [0, 0.12, 0.24, 0.5, 0.62, 0.74].forEach(d => tone(2730, d, 0.08, 0.45, 'square', HOLD)) },
+  sifflet: { label: 'Sifflet', help: 'Coup de sifflet d\'arbitre avec trille : court, court, long.',
+    min: () => tone(2400, 0, 0.2, 0.45, 'square', { hold: true, vib: [28, 180] }),
+    prep: () => { tone(2400, 0, 0.16, 0.45, 'square', { hold: true, vib: [28, 180] }); tone(2400, 0.24, 0.16, 0.45, 'square', { hold: true, vib: [28, 180] }); },
+    tick: () => tone(2400, 0, 0.05, 0.45, 'square', HOLD),
+    end: () => { [0, 0.24].forEach(d => tone(2400, d, 0.16, 0.45, 'square', { hold: true, vib: [28, 180] })); tone(2400, 0.48, 0.7, 0.45, 'square', { hold: true, vib: [28, 180] }); } },
+  cloche: { label: 'Cloche', help: 'Cloche de ring de boxe : le son résonne longtemps.',
+    min: () => bell(1047, 0, 0.8),
+    prep: () => { bell(1319, 0, 0.5); bell(1319, 0.25, 0.6); },
+    tick: () => tone(2637, 0, 0.06, 0.45, 'triangle', HOLD),
+    end: () => [0, 0.35, 0.7].forEach(d => bell(1047, d, 1.2)) },
 };
+const timbre = () => TIMBRES[cfg.timbre] || TIMBRES.alarme;
+const SOUNDS = { min: () => timbre().min(), prep: () => timbre().prep(), tick: () => timbre().tick(), end: () => timbre().end() };
 const SOUND_PROFILES = { off: 'Désactivé', discret: 'Discret', standard: 'Standard', complet: 'Complet' };
 const SOUND_HELP = {
   off: 'Aucun son. La barre passe quand même à l\'orange les 10 dernières secondes.',
   discret: 'Un bip à 10 s, puis le signal de fin.',
   standard: 'Double bip à 30 s, tops à 3, 2, 1, puis le signal de fin.',
-  complet: 'Un bip grave à chaque minute restante, double bip à 30 s et à 10 s, tops à 3, 2, 1, puis le signal de fin.',
+  complet: 'Un bip à chaque minute restante, double bip à 30 s et à 10 s, tops à 3, 2, 1, puis le signal de fin.',
 };
 // Signaux d'un profil pour un repos de `total` secondes : [{ left: secondes restantes, kind }]
 function timerSignals(profile, total) {
@@ -727,6 +764,20 @@ function viewSettings() {
     for (const b of soundBtns) { const on = b.dataset.k === cfg.sound; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
   };
   paintSound();
+  const timbreHelp = h('p', { class: 'sub' }, timbre().help);
+  const timbreBtns = Object.entries(TIMBRES).map(([k, t]) => h('button', {
+    type: 'button', role: 'radio', 'data-k': k,
+    onclick: () => {
+      cfg.timbre = k; store(SKEY, cfg);
+      // Aperçu : double bip puis signal de fin du son choisi.
+      unlockAudio(); SOUNDS.prep(); setTimeout(() => SOUNDS.end(), 600);
+      paintTimbre();
+    } }, t.label));
+  const paintTimbre = () => {
+    timbreHelp.textContent = timbre().help;
+    for (const b of timbreBtns) { const on = TIMBRES[b.dataset.k] === timbre(); b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
+  };
+  paintTimbre();
   const audioLine = h('p', { class: 'sub', role: 'status' }, audioState());
   const volLabel = h('span', {}, `Volume : ${Math.round(cfg.volume * 100)} %`);
   const volIn = h('input', { type: 'range', min: '10', max: '100', step: '5', value: String(Math.round(cfg.volume * 100)) });
@@ -763,6 +814,9 @@ function viewSettings() {
     h('h2', {}, 'Signaux de repos'),
     soundHelp,
     h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Signaux de repos' }, soundBtns),
+    h('h3', { class: 'sub3' }, 'Son'),
+    timbreHelp,
+    h('div', { class: 'seg seg3', role: 'radiogroup', 'aria-label': 'Son des signaux' }, timbreBtns),
     h('label', { class: 'vol' }, volLabel, volIn),
     h('button', { class: 'btn secondary', onclick: () => {
       unlockAudio(); SOUNDS.prep(); setTimeout(() => SOUNDS.end(), 600);
