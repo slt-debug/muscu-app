@@ -131,3 +131,4 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .btn.success, .btn.success:disabled { background: var(--good); color: #fff; }
 .btn.fail, .btn.fail:disabled { background: var(--bad); color: #fff; }
 @media (prefers-reduced-motion: reduce) { .btn.pressed, .btn.busy::before { animation: none; } }
+.sync-log { margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--field); color: var(--ink-2); font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; max-height: 180px; overflow: auto; }

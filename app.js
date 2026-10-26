@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '4 (animation du bouton de synchro)';
+const APP_VERSION = '5 (journal de synchro)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -438,8 +438,17 @@ function viewBody() {
 }
 
 // ---------- Synchronisation GitHub ----------
-const sync = { state: cfgOk() ? 'idle' : 'off', at: null, msg: '' };
-let syncTimer = null, syncing = false;
+const sync = { state: cfgOk() ? 'idle' : 'off', at: null, msg: '', log: [] };
+let syncTimer = null, syncing = false, syncStartedAt = 0;
+// Journal visible dans Réglages : permet de voir ce que fait la synchro sur le téléphone.
+function slog(msg) {
+  const d = new Date();
+  sync.log.unshift(`${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}  ${msg}`);
+  sync.log.length = Math.min(sync.log.length, 10);
+  const el = document.getElementById('sync-log');
+  if (el) el.textContent = sync.log.join('\n');
+}
+const wait = ms => new Promise(r => setTimeout(r, ms));
 function cfgOk() { return !!(cfg.owner && cfg.repo && cfg.token); }
 function syncChip() {
   const label = { off: 'Local seulement', idle: 'Synchro en attente', busy: 'Synchro…', ok: `Synchronisé ${sync.at || ''}`, err: 'Erreur de synchro' }[sync.state];
@@ -481,8 +490,17 @@ function scheduleSync() {
 }
 const ghUrl = () => `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.path}`;
 const ghHeaders = () => ({ Authorization: `Bearer ${cfg.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' });
+// fetch avec délai maximum : sans lui, une requête bloquée laisserait la synchro « en cours » indéfiniment.
+async function ghFetch(url, opt) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 15000);
+  try { return await fetch(url, { ...opt, signal: ctl.signal }); }
+  catch (e) { throw new Error(e.name === 'AbortError' ? 'délai dépassé (15 s sans réponse de GitHub)' : e.message); }
+  finally { clearTimeout(t); }
+}
 async function ghGet() {
-  const r = await fetch(ghUrl(), { headers: ghHeaders(), cache: 'no-store' });
+  slog('Lecture du fichier sur GitHub…');
+  const r = await ghFetch(ghUrl(), { headers: ghHeaders(), cache: 'no-store' });
+  slog(`Lecture : réponse ${r.status}`);
   if (r.status === 404) return { sha: null, data: null };
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
   const j = await r.json();
@@ -492,7 +510,9 @@ async function ghGet() {
 async function ghPut(data, sha) {
   const body = { message: `sync ${new Date().toISOString()}`, content: btoa(unescape(encodeURIComponent(JSON.stringify(data, null, 1)))) };
   if (sha) body.sha = sha;
-  const r = await fetch(ghUrl(), { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) });
+  slog('Envoi des données vers GitHub…');
+  const r = await ghFetch(ghUrl(), { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) });
+  slog(`Envoi : réponse ${r.status}`);
   if (r.status === 409 || r.status === 422) { const e = new Error('conflit'); e.conflict = true; throw e; }
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
 }
@@ -514,10 +534,13 @@ function mergeColl(a, b) {
 const merge = (local, remote) => ({ sessions: mergeColl(local.sessions, remote?.sessions), body: mergeColl(local.body, remote?.body) });
 
 async function syncNow(manual) {
-  if (!cfgOk()) { if (manual) go('#/reglages'); return; }
-  if (syncing) return;
-  if (!navigator.onLine) { if (manual === true) { sync.state = 'err'; sync.msg = 'hors ligne'; refreshChips(); } return; }
-  syncing = true; sync.state = 'busy'; refreshChips();
+  const isManual = manual === true;
+  slog(isManual ? 'Appui sur « Synchroniser maintenant »' : 'Synchro automatique');
+  if (!cfgOk()) { slog('Annulé : les 4 champs ne sont pas tous remplis'); if (isManual) go('#/reglages'); return; }
+  // Une synchro bloquée depuis plus de 20 s ne doit pas empêcher les suivantes.
+  if (syncing && Date.now() - syncStartedAt < 20000) { slog('Une synchro est déjà en cours, appui ignoré'); return; }
+  if (!navigator.onLine) { slog('Annulé : le téléphone indique « hors ligne »'); if (isManual) { sync.state = 'err'; sync.msg = 'hors ligne'; refreshChips(); } return; }
+  syncing = true; syncStartedAt = Date.now(); sync.state = 'busy'; refreshChips();
   let localChanged = false;
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -534,9 +557,12 @@ async function syncNow(manual) {
     sync.state = 'ok'; const d = new Date(); sync.at = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; sync.msg = '';
     const nS = Object.values(db.sessions).filter(r => !r.deleted).length, nB = Object.values(db.body).filter(b => !b.deleted).length;
     sync.info = `${nS} séance${nS > 1 ? 's' : ''} et ${nB} mesure${nB > 1 ? 's' : ''} sur GitHub.`;
-  } catch (e) { sync.state = 'err'; sync.msg = String(e.message || e); }
+  } catch (e) { sync.state = 'err'; sync.msg = String(e.message || e); slog(`Échec : ${sync.msg}`); }
+  // L'état « en cours » reste visible au moins 0,8 s, même si la réponse de GitHub est très rapide.
+  if (isManual) await wait(Math.max(0, 800 - (Date.now() - syncStartedAt)));
   syncing = false;
-  if (manual === true) { sync.flashUntil = Date.now() + 2000; setTimeout(refreshChips, 2100); }
+  if (sync.state === 'ok') slog(`Terminé : ${sync.info}`);
+  if (isManual) { sync.flashUntil = Date.now() + 2000; setTimeout(refreshChips, 2100); }
   refreshChips();
   // Des données distantes sont arrivées : on redessine les vues de lecture (pas la séance en cours de saisie).
   const readOnlyView = ['', '#/', '#/historique'].includes(location.hash) || location.hash.startsWith('#/ex/');
@@ -598,7 +624,9 @@ function viewSettings() {
           syncNow(true);
         } catch (e) { sync.state = 'err'; sync.msg = String(e.message || e); sync.flashUntil = Date.now() + 2000; refreshChips(); }
       } }, 'Synchroniser maintenant'),
-      h('div', { class: 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), id: 'sync-line', role: 'status' }, syncMessage())),
+      h('div', { class: 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), id: 'sync-line', role: 'status' }, syncMessage()),
+      h('details', { open: true }, h('summary', { class: 'sub' }, 'Journal de la synchro'),
+        h('pre', { id: 'sync-log', class: 'sync-log' }, sync.log.length ? sync.log.join('\n') : 'Aucune tentative pour l\'instant.'))),
     h('h2', {}, 'Sauvegarde'),
     h('div', { class: 'grid2' },
       h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.json`, JSON.stringify(db, null, 1), 'application/json') }, 'Exporter JSON'),
@@ -610,6 +638,7 @@ function viewSettings() {
     h('h2', {}, 'À propos'),
     h('p', { class: 'sub' }, `Version ${APP_VERSION}`),
     h('p', { class: 'sub' }, `Double progression : quand toutes les séries atteignent le haut de la fourchette de reps, l'appli propose de monter la charge. ${Object.keys(db.sessions).length} séances et ${Object.keys(db.body).length} mesures enregistrées.`));
+  refreshChips(); // aligne le bouton sur l'état réel (par exemple une synchro déjà en cours)
 }
 
 // ---------- Routage ----------
