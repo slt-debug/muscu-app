@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '6 (champs manquants indiqués)';
+const APP_VERSION = '7 (libellé Taille)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -431,7 +431,7 @@ function viewBody() {
       add),
     h('h2', {}, 'Poids'),
     wPts.length ? lineChart([{ name: 'Moyenne 7 jours', points: avg }, { name: 'Pesée', points: wPts, raw: true, line: false }], 'kg') : h('p', { class: 'muted' }, 'Aucune pesée.'),
-    tPts.length ? [h('h2', {}, 'Tour de taille'), lineChart([{ name: 'Tour de taille', points: tPts }], 'cm')] : null,
+    tPts.length ? [h('h2', {}, 'Taille'), lineChart([{ name: 'Taille', points: tPts }], 'cm')] : null,
     h('details', {}, h('summary', {}, 'Toutes les mesures'),
       h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'kg'), h('th', {}, 'cm'), h('th', {}, '% gras')),
         [...list].reverse().map(b => h('tr', {}, h('td', {}, fmtDate(b.date)), h('td', {}, fmtKg(b.poids) || '–'), h('td', {}, fmtKg(b.taille) || '–'), h('td', {}, fmtKg(b.mg) || '–'))))));
