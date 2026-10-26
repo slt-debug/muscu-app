@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '22 (fiches exercices)';
+const APP_VERSION = '23 (remplacer un exercice)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -67,6 +67,7 @@ const EXERCISES = {};
 function fillExercises() {
   for (const k of Object.keys(EXERCISES)) delete EXERCISES[k];
   const all = [BUILTIN, ...(programs?.versions || []).slice().sort((a, b) => a.from.localeCompare(b.from))];
+  for (const c of CATALOG) EXERCISES[c.id] = c; // réglages par défaut des remplaçants possibles
   for (const p of all) for (const list of Object.values(p.sessions)) for (const ex of list) EXERCISES[ex.id] = ex;
 }
 fillExercises();
@@ -467,11 +468,20 @@ function viewSession(name, date) {
   const id = sessionId(date, name);
   // Exercices du programme actif à la date de la séance, plus ceux déjà saisis qui n'y sont plus (séance commencée avant un changement).
   const planned = programFor(date).sessions[name] || [];
-  const extra = Object.keys(db.sessions[id]?.entries || {}).filter(x => !planned.some(e => e.id === x) && EXERCISES[x]).map(x => EXERCISES[x]);
-  const list = [...planned, ...extra];
+  const rec = db.sessions[id];
+  // Remplacements pour cette séance (rec.swaps = { prévu: remplaçant }) : le remplaçant garde le nombre de séries prévu
+  // (moins celles déjà faites sur l'exercice prévu) avec sa propre fourchette et son propre repos.
+  const list = [];
+  for (const ex of planned) {
+    const to = rec?.swaps?.[ex.id] && EXERCISES[rec.swaps[ex.id]];
+    if (!to) { list.push(ex); continue; }
+    const k = doneSets(rec.entries?.[ex.id]).length;
+    if (k) list.push({ ...ex, sets: k, stoppedFor: to.name });
+    list.push({ ...to, sets: Math.max(1, ex.sets - k), swapOf: ex });
+  }
+  list.push(...Object.keys(rec?.entries || {}).filter(x => !list.some(e => e.id === x) && EXERCISES[x]).map(x => EXERCISES[x]));
   if (!list.length) return go('#/');
   keepAwake();
-  const rec = db.sessions[id];
   const total = list.reduce((n, ex) => n + ex.sets, 0);
   const sugs = Object.fromEntries(list.map(ex => [ex.id, suggest(ex, id)]));
   if (ui.active && !list.some(ex => ex.id === ui.active)) ui.active = undefined;
@@ -487,7 +497,8 @@ function viewSession(name, date) {
     const nDone = doneSets(entry).length;
     const open = ui.active === ex.id;
     const head = h('button', { class: 'ex-head', onclick: () => { ui.active = open ? null : ex.id; redraw(); } },
-      h('div', { class: 'grow' }, h('h3', {}, ex.name), h('div', { class: 'sub' }, `${ex.sets} × ${ex.lo === ex.hi ? ex.lo : ex.lo + '-' + ex.hi}${ex.note ? ' · ' + ex.note : ''}`)),
+      h('div', { class: 'grow' }, h('h3', {}, ex.name), h('div', { class: 'sub' }, `${ex.sets} × ${ex.lo === ex.hi ? ex.lo : ex.lo + '-' + ex.hi}${ex.note ? ' · ' + ex.note : ''}`),
+        ex.swapOf ? h('span', { class: 'swaptag' }, `⇄ à la place de ${ex.swapOf.name}`) : ex.stoppedFor ? h('span', { class: 'swaptag' }, `⇄ arrêté, suite avec ${ex.stoppedFor}`) : null),
       h('span', { class: 'count' }, `${nDone}/${entry.sets.length}`));
     const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : '') },
       h('div', { class: 'ex-top' }, head, h('button', { class: 'qbtn', 'aria-label': `Fiche de l'exercice ${ex.name}`, onclick: () => openFiche(ex, id) }, '?')));
@@ -544,9 +555,13 @@ function viewSession(name, date) {
       h('button', { class: 'btn secondary small tight', onclick: () => { const last = entry.sets[entry.sets.length - 1]; entry.sets.push({ kg: last?.kg ?? null, reps: last?.reps ?? null, rir: '', done: false }); commit(date, name, ex, entry); redraw(); } }, '+ Série'),
       entry.sets.length > 1 ? h('button', { class: 'btn secondary small tight', onclick: () => { entry.sets.pop(); commit(date, name, ex, entry); redraw(); } }, '− Série') : null,
       h('a', { class: 'btn secondary small tight', href: `#/ex/${ex.id}` }, 'Historique'),
+      planned.includes(ex) && nDone < ex.sets ? h('button', { class: 'btn secondary small tight', onclick: () => openSwap(ex, id, list.map(e => e.id), to => {
+        swapExercise(date, name, ex, to); ui.active = to; redraw();
+      }) }, '⇄ Remplacer') : null,
       h('span', { style: 'flex:1' }),
       loadIcon('up', entry.load === 'up', mark('up')),
       loadIcon('down', entry.load === 'down', mark('down'))));
+    if (ex.swapOf) card.append(h('button', { class: 'linkbtn', onclick: () => { unswapExercise(date, name, ex.swapOf, ex.id); ui.active = ex.swapOf.id; redraw(); } }, `↺ Revenir à ${ex.swapOf.name}`));
     return card;
   });
 
@@ -606,6 +621,71 @@ function openFiche(ex, sessionRecId) {
         link(youtubeUrl(lib, ex.name), 'Vidéos YouTube ↗', 'secondary')),
       h('p', { class: 'sub', style: 'margin-top:10px' }, suggest(ex, sessionRecId).text),
       h('button', { class: 'btn secondary', style: 'margin-top:8px', onclick: close }, 'Fermer')));
+  document.body.append(wrap);
+}
+
+// Remplacement pour une seule séance : les séries déjà faites restent sur l'exercice prévu, les autres passent au remplaçant.
+function swapExercise(date, name, ex, toId) {
+  const id = sessionId(date, name);
+  const rec = db.sessions[id] || (db.sessions[id] = { id, date, name, entries: {} });
+  const done = doneSets(rec.entries[ex.id]);
+  if (done.length) rec.entries[ex.id].sets = rec.entries[ex.id].sets.filter(x => done.includes(x)); else delete rec.entries[ex.id];
+  rec.swaps = { ...rec.swaps, [ex.id]: toId };
+  rec.updatedAt = Date.now(); rec.deleted = false;
+  save();
+}
+// Retour à l'exercice prévu : le remplaçant ne reste dans la séance que s'il a des séries faites.
+function unswapExercise(date, name, ex, toId) {
+  const rec = db.sessions[sessionId(date, name)];
+  if (!rec?.swaps) return;
+  delete rec.swaps[ex.id];
+  if (!doneSets(rec.entries[toId]).length) delete rec.entries[toId];
+  const e = rec.entries[ex.id];
+  if (e) while (e.sets.length < ex.sets) { const l = e.sets[e.sets.length - 1]; e.sets.push({ kg: l.kg, reps: l.reps, rir: '', done: false }); }
+  rec.updatedAt = Date.now();
+  save();
+}
+// Choix du remplaçant : variantes de la fiche, puis même groupe musculaire, ou recherche dans tout le catalogue.
+function openSwap(ex, sessionRecId, taken, onPick) {
+  if (document.querySelector('.sheet-wrap')) return;
+  const close = () => wrap.remove();
+  const norm = t => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const group = (CATALOG.find(c => c.id === ex.id) || ex).group;
+  const variants = (LIBRARY[ex.id]?.variants || []).filter(v => EXERCISES[v] && v !== ex.id);
+  const same = CATALOG.filter(c => c.group && c.group === group && c.id !== ex.id && !variants.includes(c.id));
+  let showAll = !variants.length;
+  const option = id => {
+    const o = EXERCISES[id], busy = taken.includes(id), hist = history(id, sessionRecId), last = hist[hist.length - 1];
+    let perf = 'Jamais fait';
+    if (last) { const top = Math.max(...last.sets.map(x => x.kg)); perf = `${fmtDate(last.date)} : ${fmtKg(top)} kg × ${last.sets.filter(x => x.kg === top).map(x => x.reps).join(', ')}`; }
+    return h('button', { class: 'opt', disabled: busy, onclick: () => { close(); onPick(id); } },
+      h('b', {}, o.name), h('span', { class: 'm' }, LIBRARY[id]?.machine || ''),
+      h('span', { class: 'last' + (busy ? ' busy' : last ? '' : ' none') }, busy ? 'Déjà dans cette séance' : perf));
+  };
+  const search = h('input', { type: 'search', class: 'swapsearch', placeholder: `Chercher parmi les ${CATALOG.length} exercices`, oninput: () => fill() });
+  const box = h('div');
+  const fill = () => {
+    const q = norm(search.value.trim());
+    if (q) {
+      const found = CATALOG.filter(c => c.id !== ex.id && (norm(c.name).includes(q) || norm(LIBRARY[c.id]?.machine || '').includes(q)));
+      box.replaceChildren(...(found.length ? found.map(c => option(c.id)) : [h('p', { class: 'sub' }, 'Aucun exercice trouvé.')]));
+      return;
+    }
+    box.replaceChildren(...[
+      variants.length ? h('div', { class: 'lbl' }, 'Alternatives conseillées') : null, ...variants.map(option),
+      !same.length ? null : showAll ? [h('div', { class: 'lbl' }, `Même groupe (${group})`), ...same.map(option)]
+        : h('button', { class: 'linkbtn', onclick: () => { showAll = true; fill(); } }, `+ ${same.length} autres exercices (${group})`),
+    ].flat().filter(Boolean));
+  };
+  fill();
+  const wrap = h('div', { class: 'sheet-wrap' },
+    h('div', { class: 'dim', onclick: close }),
+    h('div', { class: 'sheet swap', role: 'dialog', 'aria-label': `Remplacer ${ex.name}` },
+      h('span', { class: 'grab', 'aria-hidden': 'true' }),
+      h('h2', { style: 'margin:4px 0 2px' }, `Remplacer « ${ex.name} »`),
+      h('div', { class: 'sub' }, `${LIBRARY[ex.id]?.muscles.join(', ') || group || ''} · seulement pour cette séance`),
+      box, search,
+      h('button', { class: 'btn secondary', style: 'margin-top:10px', onclick: close }, 'Annuler')));
   document.body.append(wrap);
 }
 

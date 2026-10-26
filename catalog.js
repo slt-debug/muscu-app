@@ -1,0 +1,75 @@
+'use strict';
+// Catalogue d'exercices (machines courantes en salle et matériel libre : rack, Smith machine, barres, haltères, banc, poulies).
+// Sert à l'éditeur de programme du dashboard et au remplacement d'un exercice en séance.
+// Valeurs conseillées pour l'hypertrophie : séries, fourchette de reps, repos (s), pas de charge (kg).
+// Les exercices du programme d'origine gardent leur identifiant pour conserver leur historique.
+const CATALOG = [
+  // Pecs
+  { id: 'dc', name: 'Développé couché barre', group: 'Pecs', sets: 4, lo: 5, hi: 6, rest: 180, step: 2.5 },
+  { id: 'inc', name: 'Développé incliné haltères', group: 'Pecs', sets: 3, lo: 8, hi: 10, rest: 120, step: 2, note: 'Charge par main' },
+  { id: 'incb', name: 'Développé incliné barre ou machine', group: 'Pecs', sets: 4, lo: 8, hi: 10, rest: 150, step: 2.5 },
+  { id: 'fly', name: 'Butterfly ou écartés poulie', group: 'Pecs', sets: 3, lo: 12, hi: 15, rest: 90, step: 2.5 },
+  { id: 'c_dch', name: 'Développé couché haltères', group: 'Pecs', sets: 3, lo: 8, hi: 10, rest: 120, step: 2, note: 'Charge par main' },
+  { id: 'c_presspec', name: 'Presse pectoraux (machine)', group: 'Pecs', sets: 3, lo: 8, hi: 12, rest: 120, step: 2.5 },
+  { id: 'c_crossover', name: 'Écartés poulie haute (crossover)', group: 'Pecs', sets: 3, lo: 12, hi: 15, rest: 90, step: 2.5 },
+  { id: 'c_dcsmith', name: 'Développé incliné Smith machine', group: 'Pecs', sets: 3, lo: 8, hi: 10, rest: 120, step: 2.5 },
+  // Dos
+  { id: 'row', name: 'Rowing barre penchée', group: 'Dos', sets: 3, lo: 6, hi: 8, rest: 150, step: 2.5 },
+  { id: 'tv', name: 'Tirage vertical', group: 'Dos', sets: 3, lo: 8, hi: 10, rest: 120, step: 2.5, note: 'Ou tractions' },
+  { id: 'c_rowpb', name: 'Rowing poulie basse', group: 'Dos', sets: 3, lo: 10, hi: 12, rest: 90, step: 2.5, note: 'Coudes près du corps' },
+  { id: 'c_rowmach', name: 'Tirage horizontal (machine)', group: 'Dos', sets: 3, lo: 10, hi: 12, rest: 90, step: 2.5 },
+  { id: 'c_rowhalt', name: 'Rowing haltère un bras', group: 'Dos', sets: 3, lo: 8, hi: 12, rest: 90, step: 2, note: 'Par bras' },
+  { id: 'c_tvserre', name: 'Tirage vertical prise serrée', group: 'Dos', sets: 3, lo: 10, hi: 12, rest: 90, step: 2.5 },
+  { id: 'c_pullover', name: 'Pull-over poulie (bras tendus)', group: 'Dos', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5 },
+  { id: 'c_lombaires', name: 'Extension du dos (machine)', group: 'Dos', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5 },
+  // Épaules
+  { id: 'ohp', name: 'Développé épaules haltères', group: 'Épaules', sets: 3, lo: 6, hi: 8, rest: 120, step: 2, note: 'Charge par main' },
+  { id: 'lat', name: 'Élévations latérales', group: 'Épaules', sets: 3, lo: 12, hi: 15, rest: 60, step: 1, note: 'Charge par main' },
+  { id: 'rear', name: 'Oiseau ou face pull', group: 'Épaules', sets: 2, lo: 15, hi: 15, rest: 60, step: 2.5 },
+  { id: 'c_ohpmach', name: 'Développé épaules (machine)', group: 'Épaules', sets: 3, lo: 8, hi: 10, rest: 120, step: 2.5 },
+  { id: 'c_latpoulie', name: 'Élévations latérales poulie', group: 'Épaules', sets: 3, lo: 12, hi: 15, rest: 60, step: 1.25, note: 'Par bras' },
+  { id: 'c_reardelt', name: 'Oiseau machine (rear delt)', group: 'Épaules', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5 },
+  { id: 'c_facepull', name: 'Face pull poulie', group: 'Épaules', sets: 3, lo: 15, hi: 20, rest: 60, step: 2.5 },
+  // Bras
+  { id: 'curl', name: 'Curl haltères', group: 'Bras', sets: 3, lo: 8, hi: 10, rest: 90, step: 2, note: 'Charge par main' },
+  { id: 'curlinc', name: 'Curl incliné haltères', group: 'Bras', sets: 3, lo: 10, hi: 12, rest: 90, step: 2, note: 'Charge par main' },
+  { id: 'tri', name: 'Extension triceps poulie', group: 'Bras', sets: 3, lo: 10, hi: 12, rest: 90, step: 2.5 },
+  { id: 'tri2', name: 'Extension triceps au-dessus de la tête (poulie)', group: 'Bras', sets: 3, lo: 10, hi: 12, rest: 90, step: 2.5 },
+  { id: 'dips', name: 'Dips assis machine (triceps)', group: 'Bras', sets: 2, lo: 10, hi: 12, rest: 90, step: 2.5 },
+  { id: 'c_curlmach', name: 'Curl biceps (machine)', group: 'Bras', sets: 3, lo: 10, hi: 12, rest: 90, step: 2.5 },
+  { id: 'c_curlmarteau', name: 'Curl marteau haltères', group: 'Bras', sets: 3, lo: 10, hi: 12, rest: 90, step: 2, note: 'Charge par main' },
+  { id: 'c_curlbarre', name: 'Curl barre EZ', group: 'Bras', sets: 3, lo: 8, hi: 10, rest: 90, step: 2.5 },
+  { id: 'c_curlpoulie', name: 'Curl poulie basse', group: 'Bras', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5 },
+  { id: 'c_barrefront', name: 'Barre au front (EZ)', group: 'Bras', sets: 3, lo: 8, hi: 10, rest: 90, step: 2.5 },
+  { id: 'c_kickback', name: 'Extension triceps un bras poulie', group: 'Bras', sets: 3, lo: 12, hi: 15, rest: 60, step: 1.25, note: 'Par bras' },
+  // Jambes
+  { id: 'squat', name: 'Squat barre (rack)', group: 'Jambes', sets: 4, lo: 6, hi: 8, rest: 180, step: 2.5, note: 'Smith machine en alternative' },
+  { id: 'sdt', name: 'Soulevé de terre', group: 'Jambes', sets: 3, lo: 3, hi: 5, rest: 180, step: 2.5 },
+  { id: 'rdl', name: 'Soulevé de terre roumain', group: 'Jambes', sets: 3, lo: 8, hi: 10, rest: 150, step: 2.5 },
+  { id: 'presse', name: 'Presse à cuisses', group: 'Jambes', sets: 4, lo: 8, hi: 10, rest: 150, step: 5 },
+  { id: 'presse2', name: 'Presse à cuisses (pieds hauts)', group: 'Jambes', sets: 3, lo: 10, hi: 12, rest: 120, step: 5 },
+  { id: 'fentes', name: 'Fentes marchées haltères', group: 'Jambes', sets: 3, lo: 10, hi: 10, rest: 120, step: 2, note: '10 par jambe, charge par main' },
+  { id: 'lcurl', name: 'Leg curl', group: 'Jambes', sets: 3, lo: 10, hi: 12, rest: 90, step: 2.5 },
+  { id: 'lext', name: 'Leg extension', group: 'Jambes', sets: 3, lo: 12, hi: 15, rest: 90, step: 2.5 },
+  { id: 'calf', name: 'Mollets debout', group: 'Jambes', sets: 4, lo: 12, hi: 15, rest: 60, step: 5 },
+  { id: 'hip', name: 'Hip thrust machine', group: 'Jambes', sets: 3, lo: 10, hi: 10, rest: 120, step: 5 },
+  { id: 'abd', name: 'Abduction machine', group: 'Jambes', sets: 2, lo: 15, hi: 15, rest: 60, step: 2.5 },
+  { id: 'c_squatsmith', name: 'Squat Smith machine', group: 'Jambes', sets: 4, lo: 8, hi: 10, rest: 150, step: 2.5 },
+  { id: 'c_pressevert', name: 'Presse verticale', group: 'Jambes', sets: 3, lo: 10, hi: 12, rest: 120, step: 5 },
+  { id: 'c_lcurlallonge', name: 'Leg curl allongé', group: 'Jambes', sets: 3, lo: 10, hi: 12, rest: 90, step: 2.5 },
+  { id: 'c_bulgare', name: 'Squat bulgare haltères', group: 'Jambes', sets: 3, lo: 8, hi: 10, rest: 120, step: 2, note: 'Par jambe, charge par main' },
+  { id: 'c_gobelet', name: 'Squat gobelet haltère', group: 'Jambes', sets: 3, lo: 10, hi: 12, rest: 90, step: 2 },
+  { id: 'c_adduct', name: 'Adduction machine', group: 'Jambes', sets: 2, lo: 12, hi: 15, rest: 60, step: 2.5 },
+  { id: 'c_fessiers', name: 'Machine fessiers (kickback)', group: 'Jambes', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5, note: 'Par jambe' },
+  { id: 'c_mollassis', name: 'Mollets assis (Smith ou machine)', group: 'Jambes', sets: 3, lo: 12, hi: 15, rest: 60, step: 5 },
+  // Abdos
+  { id: 'abs', name: 'Crunch banc décliné', group: 'Abdos', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5, kg: 0, note: 'Poids du corps' },
+  { id: 'c_crunchmach', name: 'Crunch machine', group: 'Abdos', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5 },
+  { id: 'c_rotation', name: 'Rotation du buste (machine)', group: 'Abdos', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5, note: 'Par côté' },
+  { id: 'c_crunchpoulie', name: 'Crunch poulie haute à genoux', group: 'Abdos', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5 },
+  { id: 'c_relevejambes', name: 'Relevé de jambes (chaise romaine)', group: 'Abdos', sets: 3, lo: 10, hi: 15, rest: 60, step: 0, kg: 0, note: 'Poids du corps' },
+  { id: 'c_gainage', name: 'Gainage planche (secondes)', group: 'Abdos', sets: 3, lo: 30, hi: 60, rest: 60, step: 0, kg: 0, note: 'Reps = secondes tenues' },
+  // Cardio : « reps » = minutes, pas de repos, non compté dans les séries par muscle
+  { id: 'c_marche', name: 'Marche inclinée tapis', group: 'Cardio', sets: 1, lo: 10, hi: 15, rest: 0, step: 0, kg: 0, note: 'Reps = minutes, pente 8 à 10 %, allure où tu peux parler' },
+  { id: 'c_velo', name: 'Vélo (cardio léger)', group: 'Cardio', sets: 1, lo: 10, hi: 15, rest: 0, step: 0, kg: 0, note: 'Reps = minutes' },
+];

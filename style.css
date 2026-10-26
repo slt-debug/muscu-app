@@ -74,6 +74,17 @@ a { color: var(--accent); }
 .fiche ol, .fiche ul { margin: 4px 0 0; padding-left: 20px; display: grid; gap: 4px; font-size: 15px; }
 .fiche .err li::marker { color: var(--bad); }
 .fiche .grid2 .btn { text-decoration: none; display: flex; align-items: center; justify-content: center; min-height: 44px; }
+/* Remplacement d'un exercice en séance */
+.swaptag { display: inline-block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 6px; padding: 2px 7px; }
+.linkbtn { background: none; border: 0; padding: 8px 2px 0; color: var(--accent); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; text-align: left; }
+.swap .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 12px; }
+.swap .opt { display: grid; gap: 1px; width: 100%; text-align: left; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--grid); border-radius: 12px; background: var(--card); color: var(--ink); font: inherit; cursor: pointer; }
+.swap .opt b { font-size: 15px; }
+.swap .opt .m, .swap .opt .last { font-size: 13px; color: var(--ink-2); }
+.swap .opt .last.none { color: var(--muted); font-style: italic; }
+.swap .opt .last.busy { color: var(--warn); }
+.swap .opt:disabled { opacity: .55; cursor: default; }
+.swapsearch { width: 100%; margin-top: 12px; padding: 10px 12px; border: 0; border-radius: 10px; background: var(--field); color: var(--ink); font: inherit; font-size: 16px; }
 .ex-head .count { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 14px; }
 .hint { font-size: 13px; color: var(--ink-2); margin: 8px 0 4px; }
 .hint b { color: var(--ink); }
