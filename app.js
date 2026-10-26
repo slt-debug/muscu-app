@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '10 (flèches de charge)';
+const APP_VERSION = '11 (rangée alignée)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -345,7 +345,8 @@ function viewSession(name, date) {
     });
     // Jugement de la charge : une seule flèche cochée à la fois, on la décoche en la touchant de nouveau. Aucun effet sur les charges proposées.
     const mark = kind => () => { entry.load = entry.load === kind ? null : kind; commit(date, name, ex, entry); redraw(); };
-    card.append(h('div', { class: 'row', style: 'margin-top:8px;gap:6px;flex-wrap:wrap;align-items:flex-start' },
+    // La rangée commence sous le bord gauche des boutons kg (colonne numéro 14 px + écart 4 px) et tout y fait 40 px de haut.
+    card.append(h('div', { class: 'row', style: 'margin-top:8px;gap:6px;flex-wrap:wrap;align-items:stretch;padding-left:18px' },
       h('button', { class: 'btn secondary small tight', onclick: () => { const last = entry.sets[entry.sets.length - 1]; entry.sets.push({ kg: last?.kg ?? null, reps: last?.reps ?? null, rir: '', done: false }); commit(date, name, ex, entry); redraw(); } }, '+ Série'),
       entry.sets.length > 1 ? h('button', { class: 'btn secondary small tight', onclick: () => { entry.sets.pop(); commit(date, name, ex, entry); redraw(); } }, '− Série') : null,
       h('a', { class: 'btn secondary small tight', href: `#/ex/${ex.id}` }, 'Historique'),
@@ -368,8 +369,8 @@ function viewSession(name, date) {
 function loadIcon(kind, on, onclick) {
   const up = kind === 'up';
   const svg = s('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' }, s('path', { d: up ? 'M12 19V5M5.5 11.5 12 5l6.5 6.5' : 'M12 5v14M5.5 12.5 12 19l6.5-6.5' }));
-  return h('button', { type: 'button', class: `ico ${kind}${on ? ' on' : ''}`, 'aria-pressed': on ? 'true' : 'false', 'aria-label': up ? 'Charge trop légère' : 'Charge trop lourde', onclick },
-    h('span', { class: 'face' }, svg), h('small', {}, up ? 'Léger' : 'Lourd'));
+  return h('button', { type: 'button', class: `lchip ${kind}${on ? ' on' : ''}`, 'aria-pressed': on ? 'true' : 'false', 'aria-label': up ? 'Charge trop légère' : 'Charge trop lourde', onclick },
+    svg, h('small', {}, up ? 'Léger' : 'Lourd'));
 }
 const loadTag = l => l === 'up' ? h('span', { class: 'tag up' }, '↑ Légère') : l === 'down' ? h('span', { class: 'tag down' }, '↓ Lourde') : '–';
 
