@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '8 (mensurations)';
+const APP_VERSION = '9 (Upper / Lower)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -560,7 +560,22 @@ function mergeColl(a, b) {
   }
   return out;
 }
-const merge = (local, remote) => ({ sessions: mergeColl(local.sessions, remote?.sessions), body: mergeColl(local.body, remote?.body) });
+// Anciens noms de séances (avant le passage en anglais) : les fiches déjà enregistrées sont renommées à la volée.
+const LEGACY_NAMES = { 'Haut A': 'Upper A', 'Haut B': 'Upper B', 'Bas A': 'Lower A', 'Bas B': 'Lower B' };
+function migrateSessions(coll) {
+  const out = {};
+  for (const [id, rec] of Object.entries(coll || {})) {
+    const m = /^(\d{4}-\d{2}-\d{2})_(.+)$/.exec(id);
+    const to = m && LEGACY_NAMES[m[2]];
+    const nid = to ? `${m[1]}_${to}` : id, nrec = to ? { ...rec, id: nid, name: to } : rec;
+    out[nid] = out[nid] ? mergeColl({ [nid]: out[nid] }, { [nid]: nrec })[nid] : nrec;
+  }
+  return out;
+}
+const merge = (local, remote) => ({
+  sessions: mergeColl(migrateSessions(local.sessions), migrateSessions(remote?.sessions)),
+  body: mergeColl(local.body, remote?.body),
+});
 
 async function syncNow(manual) {
   const isManual = manual === true;
@@ -688,6 +703,7 @@ function render() {
 window.addEventListener('hashchange', () => { ui.active = undefined; render(); });
 window.addEventListener('online', () => syncNow());
 document.addEventListener('click', unlockAudio, { once: true });
+db.sessions = migrateSessions(db.sessions); store(KEY, db); // renomme les anciennes fiches (Haut/Bas => Upper/Lower)
 render();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 syncNow();
