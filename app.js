@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '13 (son débloqué)';
+const APP_VERSION = '14 (volume réglable)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -49,7 +49,7 @@ function load(key, fallback) {
 }
 function store(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* stockage indisponible */ } }
 let db = Object.assign({ sessions: {}, body: {} }, load(KEY, {}));
-let cfg = Object.assign({ owner: '', repo: '', path: 'data.json', token: '', sound: 'complet' }, load(SKEY, {}));
+let cfg = Object.assign({ owner: '', repo: '', path: 'data.json', token: '', sound: 'complet', volume: 1 }, load(SKEY, {}));
 function save() { store(KEY, db); scheduleSync(); }
 
 const EXERCISES = {};
@@ -144,7 +144,9 @@ function tone(freq, at, dur, vol, type = 'sine') {
   if (!audioCtx) return;
   const o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = audioCtx.currentTime + at;
   o.type = type; o.frequency.value = freq; o.connect(g); g.connect(audioCtx.destination);
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  // Le son le plus fort (0,45) atteint le maximum quand le curseur de volume est à 100 %.
+  const peak = Math.min(1, Math.max(0.0002, vol / 0.45 * cfg.volume));
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   o.start(t); o.stop(t + dur + 0.02);
 }
 const SOUNDS = {
@@ -726,6 +728,11 @@ function viewSettings() {
   };
   paintSound();
   const audioLine = h('p', { class: 'sub', role: 'status' }, audioState());
+  const volLabel = h('span', {}, `Volume : ${Math.round(cfg.volume * 100)} %`);
+  const volIn = h('input', { type: 'range', min: '10', max: '100', step: '5', value: String(Math.round(cfg.volume * 100)) });
+  volIn.addEventListener('input', () => { cfg.volume = volIn.value / 100; volLabel.textContent = `Volume : ${volIn.value} %`; });
+  // Au relâchement du curseur : on enregistre et on fait entendre le signal de fin au nouveau volume.
+  volIn.addEventListener('change', () => { store(SKEY, cfg); unlockAudio(); SOUNDS.end(); });
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Réglages'), syncChip()),
     h('h2', {}, 'Synchronisation GitHub'),
@@ -756,6 +763,7 @@ function viewSettings() {
     h('h2', {}, 'Signaux de repos'),
     soundHelp,
     h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Signaux de repos' }, soundBtns),
+    h('label', { class: 'vol' }, volLabel, volIn),
     h('button', { class: 'btn secondary', onclick: () => {
       unlockAudio(); SOUNDS.prep(); setTimeout(() => SOUNDS.end(), 600);
       // L'état se lit après un court délai, le temps que le contexte audio démarre.
