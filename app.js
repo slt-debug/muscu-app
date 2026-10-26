@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '12 (signaux de repos)';
+const APP_VERSION = '13 (son débloqué)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -116,13 +116,29 @@ function setsDone(rec) {
 
 // ---------- Minuteur de repos ----------
 const timerEl = document.getElementById('timer');
-let timer = null, audioCtx = null;
+let timer = null, audioCtx = null, audioStale = false;
+// iOS 17+ : les bips se mélangent à la musique au lieu de la couper.
+try { if (navigator.audioSession) navigator.audioSession.type = 'ambient'; } catch { /* non pris en charge */ }
+// Sur iPhone, le son ne part que si le contexte audio a été débloqué pendant un toucher.
+// Après un passage en arrière-plan, il peut rester « running » mais muet : on le recrée au toucher suivant.
 function unlockAudio() {
   try {
+    if (audioCtx && audioStale) { audioCtx.close().catch(() => {}); audioCtx = null; }
+    audioStale = false;
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+    // Un échantillon silencieux joué pendant le toucher termine le déblocage sur iOS.
+    const src = audioCtx.createBufferSource();
+    src.buffer = audioCtx.createBuffer(1, 1, 22050);
+    src.connect(audioCtx.destination); src.start(0);
   } catch { /* pas d'audio */ }
 }
+function audioState() {
+  const s = audioCtx ? audioCtx.state : 'pas encore créé';
+  return `Audio : ${s}${navigator.audioSession ? `, session ${navigator.audioSession.type}` : ''}`;
+}
+['touchend', 'click'].forEach(ev => document.addEventListener(ev, unlockAudio, { passive: true }));
+document.addEventListener('visibilitychange', () => { if (document.hidden) audioStale = true; });
 // tone(fréquence Hz, départ s, durée s, volume)
 function tone(freq, at, dur, vol, type = 'sine') {
   if (!audioCtx) return;
@@ -709,6 +725,7 @@ function viewSettings() {
     for (const b of soundBtns) { const on = b.dataset.k === cfg.sound; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
   };
   paintSound();
+  const audioLine = h('p', { class: 'sub', role: 'status' }, audioState());
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Réglages'), syncChip()),
     h('h2', {}, 'Synchronisation GitHub'),
@@ -739,6 +756,12 @@ function viewSettings() {
     h('h2', {}, 'Signaux de repos'),
     soundHelp,
     h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Signaux de repos' }, soundBtns),
+    h('button', { class: 'btn secondary', onclick: () => {
+      unlockAudio(); SOUNDS.prep(); setTimeout(() => SOUNDS.end(), 600);
+      // L'état se lit après un court délai, le temps que le contexte audio démarre.
+      setTimeout(() => { audioLine.textContent = audioState(); }, 400);
+    } }, 'Tester le son'),
+    audioLine,
     h('h2', {}, 'Sauvegarde'),
     h('div', { class: 'grid2' },
       h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.json`, JSON.stringify(db, null, 1), 'application/json') }, 'Exporter JSON'),
@@ -769,7 +792,6 @@ function render() {
 }
 window.addEventListener('hashchange', () => { ui.active = undefined; render(); });
 window.addEventListener('online', () => syncNow());
-document.addEventListener('click', unlockAudio, { once: true });
 db.sessions = migrateSessions(db.sessions); store(KEY, db); // renomme les anciennes fiches (Haut/Bas => Upper/Lower)
 render();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
