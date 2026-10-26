@@ -444,8 +444,27 @@ function syncChip() {
   const label = { off: 'Local seulement', idle: 'Synchro en attente', busy: 'Synchro…', ok: `Synchronisé ${sync.at || ''}`, err: 'Erreur de synchro' }[sync.state];
   return h('span', { class: 'chip sync ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), onclick: () => syncNow(true) }, label);
 }
+function explainError(msg) {
+  if (/Load failed|Failed to fetch|NetworkError/i.test(msg)) return 'impossible de joindre GitHub (vérifie ta connexion).';
+  if (/401/.test(msg)) return 'jeton refusé (401). Vérifie qu\'il est bien copié en entier et qu\'il n\'a pas expiré.';
+  if (/403/.test(msg)) return 'accès refusé (403). Le jeton doit avoir la permission « Contents : Read and write » sur le dépôt muscu-data.';
+  if (/404/.test(msg)) return 'dépôt introuvable (404). Vérifie le compte et le nom du dépôt, et que le jeton couvre bien muscu-data.';
+  if (msg === 'hors ligne') return 'pas de réseau pour le moment.';
+  return msg;
+}
+function syncMessage() {
+  if (sync.state === 'off') return 'Renseigne les 4 champs pour activer la synchro.';
+  if (sync.state === 'busy') return 'Synchronisation en cours…';
+  if (sync.state === 'ok') return `Synchronisé à ${sync.at}. ${sync.info || ''}`;
+  if (sync.state === 'err') return `Échec : ${explainError(sync.msg)}`;
+  return 'Prêt. Touche le bouton pour synchroniser.';
+}
 function refreshChips() {
   document.querySelectorAll('.chip.sync').forEach(c => c.replaceWith(syncChip()));
+  const line = document.getElementById('sync-line');
+  if (line) { line.textContent = syncMessage(); line.className = 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''); }
+  const btn = document.getElementById('sync-btn');
+  if (btn) { btn.disabled = sync.state === 'busy'; btn.textContent = sync.state === 'busy' ? 'Synchronisation…' : 'Synchroniser maintenant'; }
 }
 function scheduleSync() {
   if (!cfgOk()) return;
@@ -478,7 +497,8 @@ const merge = (local, remote) => ({ sessions: mergeColl(local.sessions, remote?.
 
 async function syncNow(manual) {
   if (!cfgOk()) { if (manual) go('#/reglages'); return; }
-  if (syncing || !navigator.onLine) return;
+  if (syncing) return;
+  if (!navigator.onLine) { if (manual === true) { sync.state = 'err'; sync.msg = 'hors ligne'; refreshChips(); } return; }
   syncing = true; sync.state = 'busy'; refreshChips();
   let localChanged = false;
   try {
@@ -494,6 +514,8 @@ async function syncNow(manual) {
       } catch (e) { if (!e.conflict || attempt) throw e; }
     }
     sync.state = 'ok'; const d = new Date(); sync.at = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; sync.msg = '';
+    const nS = Object.values(db.sessions).filter(r => !r.deleted).length, nB = Object.values(db.body).filter(b => !b.deleted).length;
+    sync.info = `${nS} séance${nS > 1 ? 's' : ''} et ${nB} mesure${nB > 1 ? 's' : ''} sur GitHub.`;
   } catch (e) { sync.state = 'err'; sync.msg = String(e.message || e); }
   syncing = false; refreshChips();
   // Des données distantes sont arrivées : on redessine les vues de lecture (pas la séance en cours de saisie).
@@ -518,8 +540,10 @@ function toCsv() {
 }
 function viewSettings() {
   setTab('set');
+  const fieldInputs = {};
   const f = (key, label, type = 'text', ph = '') => {
     const i = h('input', { type, value: cfg[key], placeholder: ph, autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+    fieldInputs[key] = i;
     i.addEventListener('change', () => { cfg[key] = i.value.trim(); store(SKEY, cfg); sync.state = cfgOk() ? 'idle' : 'off'; });
     return h('label', { class: 'field' }, h('span', {}, label), i);
   };
@@ -532,7 +556,7 @@ function viewSettings() {
   });
   const standalone = window.navigator.standalone || matchMedia('(display-mode: standalone)').matches;
   mount(
-    h('h1', {}, 'Réglages'),
+    h('div', { class: 'row between' }, h('h1', {}, 'Réglages'), syncChip()),
     h('h2', {}, 'Synchronisation GitHub'),
     h('p', { class: 'sub' }, 'Tes données sont enregistrées sur le téléphone, puis copiées dans un dépôt GitHub privé pour les retrouver sur ton PC.'),
     h('div', { class: 'card' },
@@ -540,8 +564,15 @@ function viewSettings() {
       f('repo', 'Dépôt de données (privé)', 'text', 'muscu-data'),
       f('path', 'Fichier', 'text', 'data.json'),
       f('token', 'Jeton d\'accès (fine-grained)', 'password'),
-      h('button', { class: 'btn', onclick: () => syncNow(true) }, 'Synchroniser maintenant'),
-      h('div', { class: 'sub', style: 'margin-top:8px' }, sync.state === 'err' ? `Erreur : ${sync.msg}` : sync.state === 'ok' ? `Dernière synchro à ${sync.at}` : cfgOk() ? 'Prêt.' : 'Renseigne les 4 champs pour activer la synchro.')),
+      h('button', { class: 'btn', id: 'sync-btn', onclick: () => {
+        // On relit les champs ici : sur iPhone l'événement « change » peut ne pas être parti avant le toucher.
+        for (const [k, inp] of Object.entries(fieldInputs)) cfg[k] = inp.value.trim();
+        store(SKEY, cfg);
+        sync.state = cfgOk() ? 'idle' : 'off';
+        if (!cfgOk()) { refreshChips(); return; }
+        syncNow(true);
+      } }, 'Synchroniser maintenant'),
+      h('div', { class: 'sync-line ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), id: 'sync-line', role: 'status' }, syncMessage())),
     h('h2', {}, 'Sauvegarde'),
     h('div', { class: 'grid2' },
       h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.json`, JSON.stringify(db, null, 1), 'application/json') }, 'Exporter JSON'),
