@@ -64,6 +64,16 @@ a { color: var(--accent); }
 .chip.err { color: var(--bad); }
 
 .ex-head { width: 100%; background: none; border: 0; padding: 0; text-align: left; color: inherit; font: inherit; display: flex; gap: 10px; align-items: center; }
+.ex-top { display: flex; align-items: center; gap: 8px; }
+.qbtn { flex: none; width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--field); color: var(--accent); font-family: inherit; font-weight: 800; font-size: 15px; cursor: pointer; }
+.fiche .machine { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; background: var(--field); border-radius: 6px; padding: 2px 8px; color: var(--ink-2); }
+.fiche .mus { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 4px; }
+.fiche .mus span { font-size: 12px; border-radius: 99px; padding: 2px 9px; background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); font-weight: 600; }
+.fiche .mus span.sec { background: var(--field); color: var(--ink-2); font-weight: 500; }
+.fiche .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 10px; }
+.fiche ol, .fiche ul { margin: 4px 0 0; padding-left: 20px; display: grid; gap: 4px; font-size: 15px; }
+.fiche .err li::marker { color: var(--bad); }
+.fiche .grid2 .btn { text-decoration: none; display: flex; align-items: center; justify-content: center; min-height: 44px; }
 .ex-head .count { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 14px; }
 .hint { font-size: 13px; color: var(--ink-2); margin: 8px 0 4px; }
 .hint b { color: var(--ink); }

@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '21 (cardio sans minuteur)';
+const APP_VERSION = '22 (fiches exercices)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -489,7 +489,8 @@ function viewSession(name, date) {
     const head = h('button', { class: 'ex-head', onclick: () => { ui.active = open ? null : ex.id; redraw(); } },
       h('div', { class: 'grow' }, h('h3', {}, ex.name), h('div', { class: 'sub' }, `${ex.sets} × ${ex.lo === ex.hi ? ex.lo : ex.lo + '-' + ex.hi}${ex.note ? ' · ' + ex.note : ''}`)),
       h('span', { class: 'count' }, `${nDone}/${entry.sets.length}`));
-    const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : '') }, head);
+    const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : '') },
+      h('div', { class: 'ex-top' }, head, h('button', { class: 'qbtn', 'aria-label': `Fiche de l'exercice ${ex.name}`, onclick: () => openFiche(ex, id) }, '?')));
     if (!open) return card;
     card.append(h('div', { class: 'hint' }, sugs[ex.id].text));
     card.append(h('div', { class: 'set' }, h('span'), h('span', { class: 'head' }, 'kg'), h('span', { class: 'head' }, 'reps'), h('span', { class: 'head' }, 'réserve'), h('span')));
@@ -580,6 +581,32 @@ function viewSession(name, date) {
       h('div', { class: 'sub' }, `${fmtMin(sessionDuration(rec))} · ${done} série${done > 1 ? 's' : ''} · ${fmtHour(c.start)} → ${fmtHour(c.end)}`),
       h('div', { style: 'height:10px' }),
       h('a', { class: 'btn secondary', href: '#/' }, 'Retour à l\'accueil')) : null);
+}
+
+// Fiche d'un exercice (bibliothèque library.js) dans un volet par-dessus la séance.
+function openFiche(ex, sessionRecId) {
+  if (document.querySelector('.sheet-wrap')) return;
+  const lib = LIBRARY[ex.id];
+  const close = () => wrap.remove();
+  const link = (href, label, cls) => h('a', { class: 'btn small ' + cls, href, target: '_blank', rel: 'noopener' }, label);
+  const fw = fitwillUrl(lib);
+  const wrap = h('div', { class: 'sheet-wrap' },
+    h('div', { class: 'dim', onclick: close }),
+    h('div', { class: 'sheet fiche', role: 'dialog', 'aria-label': `Fiche ${ex.name}` },
+      h('span', { class: 'grab', 'aria-hidden': 'true' }),
+      lib?.machine ? h('span', { class: 'machine' }, lib.machine.toUpperCase()) : null,
+      h('h2', { style: 'margin:4px 0 6px' }, ex.name),
+      lib ? h('div', { class: 'mus' }, lib.muscles.map(m => h('span', {}, m)), lib.secondary.map(m => h('span', { class: 'sec' }, m))) : null,
+      lib ? [h('div', { class: 'lbl' }, 'Exécution'), h('ol', {}, lib.steps.map(s => h('li', {}, s))),
+        h('div', { class: 'lbl' }, 'Erreurs fréquentes'), h('ul', { class: 'err' }, lib.errors.map(s => h('li', {}, s)))]
+        : h('p', { class: 'sub' }, 'Pas encore de fiche rédigée pour cet exercice.'),
+      ex.note ? h('p', { class: 'sub' }, `Consigne du programme : ${ex.note}`) : null,
+      h('div', { class: 'grid2', style: 'margin-top:10px' },
+        fw ? link(fw, 'Fiche Fitwill ↗', '') : null,
+        link(youtubeUrl(lib, ex.name), 'Vidéos YouTube ↗', 'secondary')),
+      h('p', { class: 'sub', style: 'margin-top:10px' }, suggest(ex, sessionRecId).text),
+      h('button', { class: 'btn secondary', style: 'margin-top:8px', onclick: close }, 'Fermer')));
+  document.body.append(wrap);
 }
 
 // Flèche de jugement de la charge (style « teinte douce avec légende »).
