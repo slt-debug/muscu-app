@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '5 (journal de synchro)';
+const APP_VERSION = '6 (champs manquants indiqués)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -462,8 +462,10 @@ function explainError(msg) {
   if (msg === 'hors ligne') return 'pas de réseau pour le moment.';
   return msg;
 }
+const FIELD_LABELS = { owner: 'Compte GitHub', repo: 'Dépôt de données', path: 'Fichier', token: 'Jeton d\'accès' };
+const missingFields = () => Object.keys(FIELD_LABELS).filter(k => !cfg[k]).map(k => FIELD_LABELS[k]);
 function syncMessage() {
-  if (sync.state === 'off') return 'Renseigne les 4 champs pour activer la synchro.';
+  if (sync.state === 'off') { const m = missingFields(); return m.length ? `Il manque : ${m.join(', ')}. Les textes gris sont des exemples, pas des valeurs saisies.` : 'Renseigne les 4 champs pour activer la synchro.'; }
   if (sync.state === 'busy') return 'Synchronisation en cours…';
   if (sync.state === 'ok') return `Synchronisé à ${sync.at}. ${sync.info || ''}`;
   if (sync.state === 'err') return `Échec : ${explainError(sync.msg)}`;
@@ -536,7 +538,7 @@ const merge = (local, remote) => ({ sessions: mergeColl(local.sessions, remote?.
 async function syncNow(manual) {
   const isManual = manual === true;
   slog(isManual ? 'Appui sur « Synchroniser maintenant »' : 'Synchro automatique');
-  if (!cfgOk()) { slog('Annulé : les 4 champs ne sont pas tous remplis'); if (isManual) go('#/reglages'); return; }
+  if (!cfgOk()) { slog(`Annulé : il manque ${missingFields().join(', ')}`); sync.state = 'off'; if (isManual) go('#/reglages'); return; }
   // Une synchro bloquée depuis plus de 20 s ne doit pas empêcher les suivantes.
   if (syncing && Date.now() - syncStartedAt < 20000) { slog('Une synchro est déjà en cours, appui ignoré'); return; }
   if (!navigator.onLine) { slog('Annulé : le téléphone indique « hors ligne »'); if (isManual) { sync.state = 'err'; sync.msg = 'hors ligne'; refreshChips(); } return; }
@@ -606,10 +608,10 @@ function viewSettings() {
     h('h2', {}, 'Synchronisation GitHub'),
     h('p', { class: 'sub' }, 'Tes données sont enregistrées sur le téléphone, puis copiées dans un dépôt GitHub privé pour les retrouver sur ton PC.'),
     h('div', { class: 'card' },
-      f('owner', 'Compte GitHub', 'text', 'ton-pseudo'),
-      f('repo', 'Dépôt de données (privé)', 'text', 'muscu-data'),
-      f('path', 'Fichier', 'text', 'data.json'),
-      f('token', 'Jeton d\'accès (fine-grained)', 'password'),
+      f('owner', 'Compte GitHub (à saisir)', 'text', 'Exemple : ton-pseudo'),
+      f('repo', 'Dépôt de données (à saisir)', 'text', 'Exemple : muscu-data'),
+      f('path', 'Fichier', 'text', 'Exemple : data.json'),
+      f('token', 'Jeton d\'accès (à saisir)', 'password', 'Colle le jeton ici'),
       h('button', { class: 'btn', id: 'sync-btn', onclick: (ev) => {
         // Retour immédiat à l'appui : l'animation et la vibration partent avant tout le reste.
         const b = ev.currentTarget;
@@ -620,7 +622,8 @@ function viewSettings() {
           for (const [k, inp] of Object.entries(fieldInputs)) cfg[k] = inp.value.trim();
           store(SKEY, cfg);
           sync.state = cfgOk() ? 'idle' : 'off';
-          if (!cfgOk()) { sync.flashUntil = Date.now() + 2000; sync.state = 'off'; refreshChips(); return; }
+          if (!cfg.path) { cfg.path = 'data.json'; store(SKEY, cfg); }
+          if (!cfgOk()) { slog(`Appui sur « Synchroniser maintenant ». Annulé : il manque ${missingFields().join(', ')}`); sync.flashUntil = Date.now() + 2000; sync.state = 'off'; refreshChips(); return; }
           syncNow(true);
         } catch (e) { sync.state = 'err'; sync.msg = String(e.message || e); sync.flashUntil = Date.now() + 2000; refreshChips(); }
       } }, 'Synchroniser maintenant'),
