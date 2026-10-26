@@ -1,0 +1,576 @@
+'use strict';
+/* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
+
+// ---------- Utilitaires ----------
+const app = document.getElementById('app');
+const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'value' || k === 'checked') el[k] = v;
+    else if (v === true) el.setAttribute(k, '');
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) {
+    if (kid == null || kid === false) continue;
+    el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  }
+  return el;
+}
+const SVGNS = 'http://www.w3.org/2000/svg';
+function s(tag, props, ...kids) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(props || {})) el.setAttribute(k, v);
+  for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  return el;
+}
+function mount(...kids) { app.replaceChildren(...kids.flat().filter(k => k != null && k !== false)); }
+const pad2 = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const today = () => ymd(new Date());
+const parseYmd = str => { const [y, m, d] = str.split('-').map(Number); return new Date(y, m - 1, d); };
+const fmtDate = str => { const d = parseYmd(str); return `${d.getDate()} ${MOIS[d.getMonth()]}`; };
+const fmtDateLong = str => { const d = parseYmd(str); return `${JOURS[d.getDay()]} ${d.getDate()} ${MOIS[d.getMonth()]}`; };
+const fmtKg = n => (n == null || n === '' ? '' : String(Math.round(n * 100) / 100).replace('.', ','));
+const num = v => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
+const e1rm = (kg, reps) => Math.round(kg * (1 + reps / 30) * 10) / 10;
+const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+
+// ---------- Stockage ----------
+const KEY = 'muscu.v1', SKEY = 'muscu.settings';
+function load(key, fallback) {
+  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; }
+}
+function store(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* stockage indisponible */ } }
+let db = Object.assign({ sessions: {}, body: {} }, load(KEY, {}));
+let cfg = Object.assign({ owner: '', repo: '', path: 'data.json', token: '' }, load(SKEY, {}));
+function save() { store(KEY, db); scheduleSync(); }
+
+const EXERCISES = {};
+for (const list of Object.values(PROGRAM.sessions)) for (const ex of list) EXERCISES[ex.id] = EXERCISES[ex.id] || ex;
+
+function doneSets(entry) {
+  return (entry?.sets || []).filter(x => x.done && x.reps > 0 && x.kg != null && x.kg >= 0);
+}
+// Historique d'un exercice, du plus ancien au plus récent (hors séance exclue).
+function history(exId, excludeId) {
+  return Object.values(db.sessions)
+    .filter(r => !r.deleted && r.id !== excludeId && r.entries?.[exId])
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(r => ({ date: r.date, sets: doneSets(r.entries[exId]) }))
+    .filter(x => x.sets.length);
+}
+function bestE1rm(sets) {
+  const w = sets.filter(x => x.kg > 0);
+  return w.length ? Math.max(...w.map(x => e1rm(x.kg, x.reps))) : null;
+}
+// Double progression : toutes les séries au haut de la fourchette => on monte la charge.
+function suggest(ex, excludeId) {
+  const hist = history(ex.id, excludeId);
+  if (!hist.length) {
+    return { kg: ex.kg, reps: ex.lo, text: ex.kg == null ? 'Première fois : trouve une charge qui laisse 1 à 2 reps en réserve.' : `Charge de départ conseillée : ${fmtKg(ex.kg)} kg.` };
+  }
+  const last = hist[hist.length - 1];
+  const top = Math.max(...last.sets.map(x => x.kg));
+  const atTop = last.sets.filter(x => x.kg === top);
+  const full = atTop.length >= ex.sets && atTop.every(x => x.reps >= ex.hi);
+  const summary = `${fmtDate(last.date)} : ${fmtKg(top)} kg × ${atTop.map(x => x.reps).join(', ')}`;
+  if (full) {
+    return { kg: top + ex.step, reps: ex.lo, text: `${summary}. Objectif : monter à ${fmtKg(top + ex.step)} kg.` };
+  }
+  const minReps = Math.min(...atTop.map(x => x.reps));
+  const target = Math.min(ex.hi, minReps + 1);
+  return { kg: top, reps: target, text: `${summary}. Objectif : ${fmtKg(top)} kg, ${target} reps sur chaque série.` };
+}
+
+// ---------- Séances ----------
+function sessionId(date, name) { return `${date}_${name}`; }
+function entryFor(ex, rec, sug) {
+  const entry = rec?.entries?.[ex.id];
+  if (entry) return entry;
+  return { sets: Array.from({ length: ex.sets }, () => ({ kg: sug.kg, reps: sug.reps, rir: '', done: false })) };
+}
+function commit(date, name, ex, entry) {
+  const id = sessionId(date, name);
+  const rec = db.sessions[id] || (db.sessions[id] = { id, date, name, entries: {} });
+  rec.entries[ex.id] = entry;
+  rec.updatedAt = Date.now();
+  rec.deleted = false;
+  save();
+}
+function sessionVolume(rec) {
+  let v = 0;
+  for (const e of Object.values(rec.entries || {})) for (const x of doneSets(e)) v += x.kg * x.reps;
+  return Math.round(v);
+}
+function setsDone(rec) {
+  return Object.values(rec?.entries || {}).reduce((n, e) => n + doneSets(e).length, 0);
+}
+
+// ---------- Minuteur de repos ----------
+const timerEl = document.getElementById('timer');
+let timer = null, audioCtx = null;
+function unlockAudio() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch { /* pas d'audio */ }
+}
+function beep() {
+  if (!audioCtx) return;
+  [0, 0.28, 0.56].forEach(delay => {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 880; o.connect(g); g.connect(audioCtx.destination);
+    const t = audioCtx.currentTime + delay;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.4, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    o.start(t); o.stop(t + 0.22);
+  });
+  try { navigator.vibrate?.([200, 100, 200]); } catch { /* ignoré */ }
+}
+function startTimer(seconds, label) {
+  unlockAudio();
+  timer = { end: Date.now() + seconds * 1000, label, fired: false };
+  renderTimer();
+}
+function stopTimer() { timer = null; renderTimer(); }
+function renderTimer() {
+  if (!timer) { timerEl.hidden = true; timerEl.className = ''; return; }
+  const left = Math.ceil((timer.end - Date.now()) / 1000);
+  timerEl.hidden = false;
+  if (left <= 0) {
+    if (!timer.fired) { timer.fired = true; beep(); }
+    timerEl.className = 'end';
+    timerEl.replaceChildren(h('div', { class: 't' }, 'Repos terminé'), h('button', { onclick: stopTimer }, 'OK'));
+    return;
+  }
+  timerEl.className = '';
+  timerEl.replaceChildren(
+    h('div', { class: 't' }, `${Math.floor(left / 60)}:${pad2(left % 60)}`),
+    h('button', { onclick: () => { timer.end += 30000; renderTimer(); } }, '+30 s'),
+    h('button', { onclick: stopTimer }, 'Stop'));
+}
+setInterval(() => { if (timer) renderTimer(); }, 500);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { if (timer) renderTimer(); syncNow(); } });
+
+let wakeLock = null;
+async function keepAwake() {
+  try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch { /* refusé */ }
+}
+
+// ---------- Graphiques ----------
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const f = raw / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+}
+// series : [{name, cls, markers, points: [{t, v, label}]}] ; la 1re série pilote le survol.
+function lineChart(series, unit) {
+  const pts = series.flatMap(x => x.points);
+  if (!pts.length) return h('p', { class: 'muted' }, 'Pas encore de données.');
+  const W = 340, H = 200, m = { l: 40, r: 14, t: 14, b: 26 };
+  let x0 = Math.min(...pts.map(p => p.t)), x1 = Math.max(...pts.map(p => p.t));
+  if (x0 === x1) { x0 -= 864e5 * 3; x1 += 864e5 * 3; }
+  let y0 = Math.min(...pts.map(p => p.v)), y1 = Math.max(...pts.map(p => p.v));
+  const span = y1 - y0 || Math.max(1, y1 * 0.05);
+  y0 -= span * 0.2; y1 += span * 0.2;
+  const step = niceStep((y1 - y0) / 4);
+  const ticks = [];
+  for (let v = Math.ceil(y0 / step) * step; v <= y1 + 1e-9; v += step) ticks.push(Math.round(v * 100) / 100);
+  const X = t => m.l + (t - x0) / (x1 - x0) * (W - m.l - m.r);
+  const Y = v => H - m.b - (v - y0) / (y1 - y0) * (H - m.t - m.b);
+
+  const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Graphique' });
+  for (const v of ticks) {
+    svg.append(s('line', { class: 'grid', x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) }),
+      s('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, fmtKg(v)));
+  }
+  svg.append(s('line', { class: 'axis', x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }));
+  const dates = [...new Set(pts.map(p => p.t))].sort((a, b) => a - b);
+  const xt = dates.length <= 2 ? dates : [dates[0], dates[Math.floor(dates.length / 2)], dates[dates.length - 1]];
+  xt.forEach((t, i) => svg.append(s('text', { x: X(t), y: H - 8, 'text-anchor': i === 0 && xt.length > 1 ? 'start' : i === xt.length - 1 && xt.length > 1 ? 'end' : 'middle' }, fmtDate(ymd(new Date(t))))));
+  for (const ser of [...series].reverse()) { // la série principale est dessinée en dernier, donc au-dessus
+    const sorted = [...ser.points].sort((a, b) => a.t - b.t);
+    if (ser.line !== false && sorted.length > 1) svg.append(s('polyline', { class: 'line', points: sorted.map(p => `${X(p.t)},${Y(p.v)}`).join(' ') }));
+    for (const p of sorted) svg.append(s('circle', { class: 'dot' + (ser.raw ? ' raw' : ''), cx: X(p.t), cy: Y(p.v), r: ser.raw ? 3 : 4 }));
+  }
+  const cross = s('line', { class: 'cross', y1: m.t, y2: H - m.b, visibility: 'hidden' });
+  svg.append(cross);
+  const wrap = h('div', { class: 'chart' }, svg);
+  const tip = h('div', { class: 'tip', hidden: true });
+  wrap.append(tip);
+  const lead = series[0].points.length ? series[0].points : pts;
+  const move = ev => {
+    const r = svg.getBoundingClientRect();
+    const vx = (ev.clientX - r.left) / r.width * W;
+    let best = lead[0];
+    for (const p of lead) if (Math.abs(X(p.t) - vx) < Math.abs(X(best.t) - vx)) best = p;
+    cross.setAttribute('x1', X(best.t)); cross.setAttribute('x2', X(best.t)); cross.setAttribute('visibility', 'visible');
+    tip.hidden = false;
+    tip.textContent = `${fmtDate(ymd(new Date(best.t)))} : ${fmtKg(best.v)} ${unit}${best.label ? ' (' + best.label + ')' : ''}`;
+    const left = X(best.t) / W * r.width + 8;
+    tip.style.left = Math.min(Math.max(left, 70), r.width - 70) + 'px';
+    tip.style.top = (Y(best.v) / H * r.height + 8) + 'px';
+  };
+  svg.addEventListener('pointermove', move);
+  svg.addEventListener('pointerdown', move);
+  svg.addEventListener('pointerleave', () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); });
+  if (series.length > 1) {
+    wrap.append(h('div', { class: 'legend' }, series.map(x => h('span', {}, h('i', { style: `background:${x.raw ? 'var(--muted)' : 'var(--series-1)'}` }), x.name))));
+  }
+  return wrap;
+}
+
+// ---------- Vues ----------
+let ui = { active: undefined }; // undefined = pas encore choisi, null = tout replié
+function setTab(name) {
+  document.querySelectorAll('#tabs a').forEach(a => a.classList.toggle('on', a.dataset.tab === name));
+}
+function nextTrainingDay() {
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(); d.setDate(d.getDate() + i);
+    if (PROGRAM.days[d.getDay()]) return { day: JOURS[d.getDay()], name: PROGRAM.days[d.getDay()] };
+  }
+}
+function weekStart() {
+  const d = new Date(); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return ymd(d);
+}
+
+function viewHome() {
+  setTab('home');
+  const now = new Date();
+  const todayName = PROGRAM.days[now.getDay()];
+  const recs = Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).sort((a, b) => b.date.localeCompare(a.date));
+  const ws = weekStart();
+  const weekDone = recs.filter(r => r.date >= ws).length;
+  const todayRec = todayName && db.sessions[sessionId(today(), todayName)];
+  const nxt = nextTrainingDay();
+  const body = Object.values(db.body).filter(b => !b.deleted).sort((a, b) => b.date.localeCompare(a.date));
+
+  const hero = todayName
+    ? h('div', { class: 'card' },
+      h('div', { class: 'sub' }, `Aujourd'hui, ${JOURS[now.getDay()]}`),
+      h('h1', {}, todayName),
+      h('div', { class: 'sub' }, `${PROGRAM.sessions[todayName].length} exercices${todayRec ? ` · ${setsDone(todayRec)} séries faites` : ''}`),
+      h('div', { style: 'height:12px' }),
+      h('a', { class: 'btn', href: `#/seance/${encodeURIComponent(todayName)}/${today()}` }, todayRec ? 'Reprendre la séance' : 'Commencer la séance'))
+    : h('div', { class: 'card' },
+      h('div', { class: 'sub' }, `Aujourd'hui, ${JOURS[now.getDay()]}`),
+      h('h1', {}, 'Jour de repos'),
+      h('div', { class: 'sub' }, `Prochaine séance : ${nxt.day}, ${nxt.name}.`));
+
+  mount(
+    h('div', { class: 'row between' }, h('h1', {}, 'Muscu'), syncChip()),
+    hero,
+    h('h2', {}, 'Autre séance'),
+    h('div', { class: 'grid2' }, Object.keys(PROGRAM.sessions).map(n =>
+      h('a', { class: 'btn secondary', href: `#/seance/${encodeURIComponent(n)}/${today()}` }, n))),
+    h('div', { class: 'grid2' },
+      h('div', { class: 'card' }, h('div', { class: 'sub' }, 'Cette semaine'), h('div', { class: 'big' }, `${weekDone}/4`), h('div', { class: 'sub' }, 'séances')),
+      h('div', { class: 'card' }, h('div', { class: 'sub' }, 'Poids'), h('div', { class: 'big' }, body[0]?.poids != null ? fmtKg(body[0].poids) : '–'), h('div', { class: 'sub' }, body[0] ? `kg, ${fmtDate(body[0].date)}` : 'à saisir dans Corps'))),
+    h('h2', {}, 'Dernières séances'),
+    recs.length ? h('div', { class: 'card' }, recs.slice(0, 6).map(r => h('a', { class: 'list-item', href: `#/seance/${encodeURIComponent(r.name)}/${r.date}` },
+      h('span', {}, `${cap(fmtDateLong(r.date))}, ${r.name}`),
+      h('span', { class: 'sub' }, `${setsDone(r)} séries · ${sessionVolume(r).toLocaleString('fr-FR')} kg`)))) : h('p', { class: 'muted' }, 'Aucune séance enregistrée pour l\'instant.'));
+}
+
+function viewSession(name, date) {
+  setTab('home');
+  const list = PROGRAM.sessions[name];
+  if (!list) return go('#/');
+  keepAwake();
+  const id = sessionId(date, name);
+  const rec = db.sessions[id];
+  const total = list.reduce((n, ex) => n + ex.sets, 0);
+  const sugs = Object.fromEntries(list.map(ex => [ex.id, suggest(ex, id)]));
+  if (ui.active && !list.some(ex => ex.id === ui.active)) ui.active = undefined;
+  if (ui.active === undefined) {
+    const first = list.find(ex => doneSets(rec?.entries?.[ex.id]).length < ex.sets);
+    ui.active = first ? first.id : null;
+  }
+
+  const redraw = () => { const y = window.scrollY; viewSession(name, date); window.scrollTo(0, y); };
+
+  const cards = list.map(ex => {
+    const entry = entryFor(ex, rec, sugs[ex.id]);
+    const nDone = doneSets(entry).length;
+    const open = ui.active === ex.id;
+    const head = h('button', { class: 'ex-head', onclick: () => { ui.active = open ? null : ex.id; redraw(); } },
+      h('div', { class: 'grow' }, h('h3', {}, ex.name), h('div', { class: 'sub' }, `${ex.sets} × ${ex.lo === ex.hi ? ex.lo : ex.lo + '-' + ex.hi}${ex.note ? ' · ' + ex.note : ''}`)),
+      h('span', { class: 'count' }, `${nDone}/${entry.sets.length}`));
+    const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : '') }, head);
+    if (!open) return card;
+    card.append(h('div', { class: 'hint' }, sugs[ex.id].text));
+    card.append(h('div', { class: 'set' }, h('span'), h('span', { class: 'head' }, 'kg'), h('span', { class: 'head' }, 'reps'), h('span', { class: 'head' }, 'réserve'), h('span')));
+    entry.sets.forEach((st, i) => {
+      const save1 = () => commit(date, name, ex, entry);
+      const kgIn = h('input', { type: 'text', inputmode: 'decimal', value: st.kg == null ? '' : fmtKg(st.kg), 'aria-label': 'Charge en kg' });
+      const repIn = h('input', { type: 'text', inputmode: 'numeric', value: st.reps == null ? '' : String(st.reps), 'aria-label': 'Répétitions' });
+      kgIn.addEventListener('change', () => { st.kg = num(kgIn.value); save1(); });
+      repIn.addEventListener('change', () => { st.reps = num(repIn.value); save1(); });
+      const bump = (input, key, delta, min) => () => {
+        const cur = num(input.value) ?? (key === 'kg' ? (ex.kg ?? 0) : 0);
+        const nv = Math.max(min, Math.round((cur + delta) * 100) / 100);
+        st[key] = nv; input.value = key === 'kg' ? fmtKg(nv) : String(nv); save1();
+      };
+      const rir = h('select', { class: 'rir', 'aria-label': 'Répétitions en réserve' },
+        ['', '0', '1', '2', '3', '4'].map(v => h('option', { value: v, selected: String(st.rir) === v }, v === '' ? '–' : v)));
+      rir.addEventListener('change', () => { st.rir = rir.value; save1(); });
+      const chk = h('button', { class: 'check' + (st.done ? ' on' : ''), 'aria-label': 'Série faite', onclick: () => {
+        st.kg = num(kgIn.value); st.reps = num(repIn.value);
+        st.done = !st.done;
+        if (st.done && !(st.reps > 0 && st.kg != null)) { st.done = false; return; }
+        commit(date, name, ex, entry);
+        if (st.done) {
+          startTimer(ex.rest, ex.name);
+          if (doneSets(entry).length >= entry.sets.length) {
+            const idx = list.indexOf(ex);
+            const nxt = list.slice(idx + 1).find(e => doneSets(db.sessions[id]?.entries?.[e.id]).length < e.sets);
+            ui.active = nxt ? nxt.id : null;
+          }
+        }
+        redraw();
+      } }, st.done ? '✓' : '○');
+      card.append(h('div', { class: 'set' },
+        h('span', { class: 'n' }, i + 1),
+        h('div', { class: 'stepper' }, h('button', { onclick: bump(kgIn, 'kg', -ex.step, 0) }, '−'), kgIn, h('button', { onclick: bump(kgIn, 'kg', ex.step, 0) }, '+')),
+        h('div', { class: 'stepper' }, h('button', { onclick: bump(repIn, 'reps', -1, 0) }, '−'), repIn, h('button', { onclick: bump(repIn, 'reps', 1, 0) }, '+')),
+        rir, chk));
+    });
+    card.append(h('div', { class: 'row', style: 'margin-top:8px' },
+      h('button', { class: 'btn secondary small', onclick: () => { const last = entry.sets[entry.sets.length - 1]; entry.sets.push({ kg: last?.kg ?? null, reps: last?.reps ?? null, rir: '', done: false }); commit(date, name, ex, entry); redraw(); } }, '+ Série'),
+      entry.sets.length > 1 ? h('button', { class: 'btn secondary small', onclick: () => { entry.sets.pop(); commit(date, name, ex, entry); redraw(); } }, '− Série') : null,
+      h('a', { class: 'btn secondary small', href: `#/ex/${ex.id}` }, 'Historique')));
+    return card;
+  });
+
+  const done = setsDone(rec);
+  mount(
+    h('div', { class: 'row between' }, h('a', { href: '#/' }, '‹ Accueil'), syncChip()),
+    h('h1', {}, name),
+    h('div', { class: 'sub' }, `${cap(fmtDateLong(date))} · ${done}/${total} séries${rec ? ' · ' + sessionVolume(rec).toLocaleString('fr-FR') + ' kg de volume' : ''}`),
+    cards,
+    done ? h('a', { class: 'btn', href: '#/', style: 'margin-top:12px' }, 'Terminer la séance') : null);
+}
+
+function viewHistory() {
+  setTab('hist');
+  const rows = Object.values(EXERCISES).map(ex => ({ ex, hist: history(ex.id) })).filter(x => x.hist.length);
+  mount(
+    h('h1', {}, 'Historique'),
+    rows.length ? h('div', { class: 'card' }, rows.map(({ ex, hist }) => {
+      const last = hist[hist.length - 1], best = bestE1rm(last.sets);
+      return h('a', { class: 'list-item', href: `#/ex/${ex.id}` },
+        h('span', {}, ex.name),
+        h('span', { class: 'sub' }, best ? `${fmtKg(best)} kg (1RM est.)` : `${last.sets.length} séries`));
+    })) : h('p', { class: 'muted' }, 'Aucune donnée. Valide une série pendant une séance pour commencer.'));
+}
+
+function viewExercise(exId) {
+  setTab('hist');
+  const ex = EXERCISES[exId];
+  if (!ex) return go('#/historique');
+  const hist = history(exId);
+  const pts = hist.map(x => ({ t: parseYmd(x.date).getTime(), v: bestE1rm(x.sets), label: x.sets.map(s2 => `${fmtKg(s2.kg)}×${s2.reps}`).join(' ') })).filter(p => p.v != null);
+  mount(
+    h('a', { href: '#/historique' }, '‹ Historique'),
+    h('h1', {}, ex.name),
+    h('div', { class: 'sub' }, '1RM estimé par séance (formule d\'Epley, meilleure série)'),
+    pts.length ? lineChart([{ name: '1RM estimé', points: pts }], 'kg') : h('p', { class: 'muted' }, hist.length ? 'Exercice au poids du corps : pas de courbe de 1RM.' : 'Pas encore de données.'),
+    h('details', { open: true }, h('summary', {}, 'Détail des séances'),
+      h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'Séries (kg × reps)')),
+        [...hist].reverse().map(x => h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, x.sets.map(s2 => `${fmtKg(s2.kg)}×${s2.reps}`).join('  ')))))));
+}
+
+function viewBody() {
+  setTab('corps');
+  const list = Object.values(db.body).filter(b => !b.deleted).sort((a, b) => a.date.localeCompare(b.date));
+  const fDate = h('input', { type: 'date', value: today() });
+  const fP = h('input', { type: 'text', inputmode: 'decimal', placeholder: '95' });
+  const fT = h('input', { type: 'text', inputmode: 'decimal', placeholder: 'cm' });
+  const fM = h('input', { type: 'text', inputmode: 'decimal', placeholder: '%' });
+  const existing = d => db.body[d] && !db.body[d].deleted ? db.body[d] : null;
+  fDate.addEventListener('change', () => {
+    const e = existing(fDate.value);
+    fP.value = e?.poids != null ? fmtKg(e.poids) : ''; fT.value = e?.taille != null ? fmtKg(e.taille) : ''; fM.value = e?.mg != null ? fmtKg(e.mg) : '';
+  });
+  const add = h('button', { class: 'btn', onclick: () => {
+    const poids = num(fP.value), taille = num(fT.value), mg = num(fM.value);
+    if (poids == null && taille == null && mg == null) return;
+    const prev = existing(fDate.value) || {};
+    db.body[fDate.value] = { id: fDate.value, date: fDate.value, poids: poids ?? prev.poids ?? null, taille: taille ?? prev.taille ?? null, mg: mg ?? prev.mg ?? null, updatedAt: Date.now() };
+    save(); viewBody();
+  } }, 'Enregistrer');
+
+  const wPts = list.filter(b => b.poids != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b.poids }));
+  const avg = wPts.map(p => {
+    const win = wPts.filter(q => q.t <= p.t && q.t > p.t - 7 * 864e5);
+    return { t: p.t, v: Math.round(win.reduce((a, q) => a + q.v, 0) / win.length * 10) / 10 };
+  });
+  const tPts = list.filter(b => b.taille != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b.taille }));
+  const last = [...list].reverse().find(b => b.poids != null);
+  const prevW = [...list].reverse().filter(b => b.poids != null)[1];
+
+  mount(
+    h('div', { class: 'row between' }, h('h1', {}, 'Corps'), syncChip()),
+    last ? h('div', { class: 'card' },
+      h('div', { class: 'sub' }, `Dernière pesée, ${fmtDate(last.date)}`),
+      h('div', { class: 'big' }, `${fmtKg(last.poids)} kg`),
+      prevW ? h('div', { class: 'sub delta ' + (last.poids <= prevW.poids ? 'up' : 'down') }, `${last.poids - prevW.poids > 0 ? '+' : ''}${fmtKg(Math.round((last.poids - prevW.poids) * 10) / 10)} kg depuis ${fmtDate(prevW.date)}`) : null) : null,
+    h('div', { class: 'card' },
+      h('label', { class: 'field' }, h('span', {}, 'Date'), fDate),
+      h('div', { class: 'grid3' },
+        h('label', { class: 'field' }, h('span', {}, 'Poids (kg)'), fP),
+        h('label', { class: 'field' }, h('span', {}, 'Taille (cm)'), fT),
+        h('label', { class: 'field' }, h('span', {}, 'Gras (%)'), fM)),
+      add),
+    h('h2', {}, 'Poids'),
+    wPts.length ? lineChart([{ name: 'Moyenne 7 jours', points: avg }, { name: 'Pesée', points: wPts, raw: true, line: false }], 'kg') : h('p', { class: 'muted' }, 'Aucune pesée.'),
+    tPts.length ? [h('h2', {}, 'Tour de taille'), lineChart([{ name: 'Tour de taille', points: tPts }], 'cm')] : null,
+    h('details', {}, h('summary', {}, 'Toutes les mesures'),
+      h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'kg'), h('th', {}, 'cm'), h('th', {}, '% gras')),
+        [...list].reverse().map(b => h('tr', {}, h('td', {}, fmtDate(b.date)), h('td', {}, fmtKg(b.poids) || '–'), h('td', {}, fmtKg(b.taille) || '–'), h('td', {}, fmtKg(b.mg) || '–'))))));
+}
+
+// ---------- Synchronisation GitHub ----------
+const sync = { state: cfgOk() ? 'idle' : 'off', at: null, msg: '' };
+let syncTimer = null, syncing = false;
+function cfgOk() { return !!(cfg.owner && cfg.repo && cfg.token); }
+function syncChip() {
+  const label = { off: 'Local seulement', idle: 'Synchro en attente', busy: 'Synchro…', ok: `Synchronisé ${sync.at || ''}`, err: 'Erreur de synchro' }[sync.state];
+  return h('span', { class: 'chip sync ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), onclick: () => syncNow(true) }, label);
+}
+function refreshChips() {
+  document.querySelectorAll('.chip.sync').forEach(c => c.replaceWith(syncChip()));
+}
+function scheduleSync() {
+  if (!cfgOk()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncNow, 4000);
+}
+const ghUrl = () => `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.path}`;
+const ghHeaders = () => ({ Authorization: `Bearer ${cfg.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' });
+async function ghGet() {
+  const r = await fetch(ghUrl(), { headers: ghHeaders(), cache: 'no-store' });
+  if (r.status === 404) return { sha: null, data: null };
+  if (!r.ok) throw new Error(`GitHub ${r.status}`);
+  const j = await r.json();
+  const txt = decodeURIComponent(escape(atob(j.content.replace(/\n/g, ''))));
+  return { sha: j.sha, data: JSON.parse(txt) };
+}
+async function ghPut(data, sha) {
+  const body = { message: `sync ${new Date().toISOString()}`, content: btoa(unescape(encodeURIComponent(JSON.stringify(data, null, 1)))) };
+  if (sha) body.sha = sha;
+  const r = await fetch(ghUrl(), { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) });
+  if (r.status === 409 || r.status === 422) { const e = new Error('conflit'); e.conflict = true; throw e; }
+  if (!r.ok) throw new Error(`GitHub ${r.status}`);
+}
+function mergeColl(a, b) {
+  const out = { ...a };
+  for (const [id, rec] of Object.entries(b || {})) if (!out[id] || (rec.updatedAt || 0) > (out[id].updatedAt || 0)) out[id] = rec;
+  return out;
+}
+const merge = (local, remote) => ({ sessions: mergeColl(local.sessions, remote?.sessions), body: mergeColl(local.body, remote?.body) });
+
+async function syncNow(manual) {
+  if (!cfgOk()) { if (manual) go('#/reglages'); return; }
+  if (syncing || !navigator.onLine) return;
+  syncing = true; sync.state = 'busy'; refreshChips();
+  let localChanged = false;
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const remote = await ghGet();
+        const merged = merge(db, remote.data);
+        const changedRemote = JSON.stringify(merged) !== JSON.stringify({ sessions: remote.data?.sessions || {}, body: remote.data?.body || {} });
+        localChanged = JSON.stringify(merged) !== JSON.stringify(db);
+        db = merged; store(KEY, db);
+        if (changedRemote) await ghPut(merged, remote.sha);
+        break;
+      } catch (e) { if (!e.conflict || attempt) throw e; }
+    }
+    sync.state = 'ok'; const d = new Date(); sync.at = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; sync.msg = '';
+  } catch (e) { sync.state = 'err'; sync.msg = String(e.message || e); }
+  syncing = false; refreshChips();
+  // Des données distantes sont arrivées : on redessine les vues de lecture (pas la séance en cours de saisie).
+  const readOnlyView = ['', '#/', '#/historique'].includes(location.hash) || location.hash.startsWith('#/ex/');
+  if (localChanged && readOnlyView) render();
+}
+
+// ---------- Réglages, export / import ----------
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = h('a', { href: url, download: name }); document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+function toCsv() {
+  const lines = ['date;seance;exercice;serie;kg;reps;reserve'];
+  for (const r of Object.values(db.sessions).filter(x => !x.deleted).sort((a, b) => a.date.localeCompare(b.date))) {
+    for (const [exId, e] of Object.entries(r.entries || {})) {
+      doneSets(e).forEach((x, i) => lines.push([r.date, r.name, EXERCISES[exId]?.name || exId, i + 1, String(x.kg).replace('.', ','), x.reps, x.rir].join(';')));
+    }
+  }
+  return lines.join('\n');
+}
+function viewSettings() {
+  setTab('set');
+  const f = (key, label, type = 'text', ph = '') => {
+    const i = h('input', { type, value: cfg[key], placeholder: ph, autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+    i.addEventListener('change', () => { cfg[key] = i.value.trim(); store(SKEY, cfg); sync.state = cfgOk() ? 'idle' : 'off'; });
+    return h('label', { class: 'field' }, h('span', {}, label), i);
+  };
+  const fileIn = h('input', { type: 'file', accept: 'application/json', hidden: true });
+  fileIn.addEventListener('change', async () => {
+    try {
+      const data = JSON.parse(await fileIn.files[0].text());
+      db = merge(db, data); save(); alert('Import terminé.'); viewSettings();
+    } catch { alert('Fichier invalide.'); }
+  });
+  const standalone = window.navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  mount(
+    h('h1', {}, 'Réglages'),
+    h('h2', {}, 'Synchronisation GitHub'),
+    h('p', { class: 'sub' }, 'Tes données sont enregistrées sur le téléphone, puis copiées dans un dépôt GitHub privé pour les retrouver sur ton PC.'),
+    h('div', { class: 'card' },
+      f('owner', 'Compte GitHub', 'text', 'ton-pseudo'),
+      f('repo', 'Dépôt de données (privé)', 'text', 'muscu-data'),
+      f('path', 'Fichier', 'text', 'data.json'),
+      f('token', 'Jeton d\'accès (fine-grained)', 'password'),
+      h('button', { class: 'btn', onclick: () => syncNow(true) }, 'Synchroniser maintenant'),
+      h('div', { class: 'sub', style: 'margin-top:8px' }, sync.state === 'err' ? `Erreur : ${sync.msg}` : sync.state === 'ok' ? `Dernière synchro à ${sync.at}` : cfgOk() ? 'Prêt.' : 'Renseigne les 4 champs pour activer la synchro.')),
+    h('h2', {}, 'Sauvegarde'),
+    h('div', { class: 'grid2' },
+      h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.json`, JSON.stringify(db, null, 1), 'application/json') }, 'Exporter JSON'),
+      h('button', { class: 'btn secondary', onclick: () => download(`muscu-${today()}.csv`, toCsv(), 'text/csv') }, 'Exporter CSV')),
+    h('div', { style: 'height:10px' }),
+    h('button', { class: 'btn secondary', onclick: () => fileIn.click() }, 'Importer un JSON'), fileIn,
+    standalone ? null : [h('h2', {}, 'Installer sur l\'iPhone'),
+      h('p', { class: 'sub' }, 'Dans Safari : bouton Partager, puis « Sur l\'écran d\'accueil ». L\'appli s\'ouvrira ensuite en plein écran et fonctionnera sans réseau.')],
+    h('h2', {}, 'À propos'),
+    h('p', { class: 'sub' }, `Double progression : quand toutes les séries atteignent le haut de la fourchette de reps, l'appli propose de monter la charge. ${Object.keys(db.sessions).length} séances et ${Object.keys(db.body).length} mesures enregistrées.`));
+}
+
+// ---------- Routage ----------
+function go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
+function render() {
+  const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
+  window.scrollTo(0, 0);
+  switch (parts[0]) {
+    case 'seance': return viewSession(parts[1], parts[2] || today());
+    case 'historique': return viewHistory();
+    case 'ex': return viewExercise(parts[1]);
+    case 'corps': return viewBody();
+    case 'reglages': return viewSettings();
+    default: return viewHome();
+  }
+}
+window.addEventListener('hashchange', () => { ui.active = undefined; render(); });
+window.addEventListener('online', () => syncNow());
+document.addEventListener('click', unlockAudio, { once: true });
+render();
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+syncNow();
