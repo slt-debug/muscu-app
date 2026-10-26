@@ -124,6 +124,14 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .seg button { min-height: 44px; border: 0; border-radius: 10px; background: var(--field); color: var(--ink); font-family: inherit; font-size: 15px; font-weight: 600; }
 .seg button.on { background: var(--accent); color: var(--on-accent); }
 .seg3 { grid-template-columns: repeat(3, 1fr); }
+#timer .t { line-height: 1.1; }
+#timer .t small { display: block; font-size: 12px; font-weight: 500; opacity: .85; }
+/* Chrono de séance : en tête de séance, gras et à chiffres fixes pour ne pas trembler */
+.sclock { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--grid); border-radius: 14px; padding: 10px 14px; margin: 10px 0 4px; }
+.sclock .t { flex: 1; min-width: 0; font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.sclock .t small { display: block; font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.sclock.live .t span { color: var(--accent); }
+.btn.end { background: var(--good); color: #fff; width: 100%; }
 #timer .gear { padding: 0 10px; display: grid; place-items: center; }
 #timer .gear svg, .navrow .ic svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
 .navrow { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--grid); border-radius: 14px; padding: 12px 14px; margin: 12px 0 4px; color: var(--ink); text-decoration: none; }

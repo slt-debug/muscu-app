@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '18 (réglages en rubriques)';
+const APP_VERSION = '19 (chrono de séance)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -113,6 +113,54 @@ function sessionVolume(rec) {
 function setsDone(rec) {
   return Object.values(rec?.entries || {}).reduce((n, e) => n + doneSets(e).length, 0);
 }
+
+// ---------- Chrono de séance ----------
+// rec.clock = { start, end, pauseMs, pausedAt } en millisecondes ; chaque série validée garde son heure dans st.t.
+// Sans « Terminer », la séance s'arrête à la dernière série validée dès qu'on n'est plus dans la séance du jour depuis 30 min.
+const IDLE_MS = 30 * 60e3;
+function lastSetTime(rec) {
+  let t = 0;
+  for (const e of Object.values(rec?.entries || {})) for (const x of e.sets || []) if (x.done && x.t > t) t = x.t;
+  return t;
+}
+function clockLive(rec, now = Date.now()) {
+  const c = rec?.clock;
+  return !!(c?.start && !c.end && !c.pausedAt && rec.date === today() && now - Math.max(c.start, lastSetTime(rec)) < IDLE_MS);
+}
+function clockEnd(rec, now = Date.now()) {
+  const c = rec.clock;
+  if (c.end) return c.end;
+  if (c.pausedAt) return c.pausedAt;
+  return clockLive(rec, now) ? now : Math.max(c.start, lastSetTime(rec));
+}
+function sessionDuration(rec, now = Date.now()) {
+  if (!rec?.clock?.start) return null;
+  return Math.max(0, clockEnd(rec, now) - rec.clock.start - (rec.clock.pauseMs || 0));
+}
+// 2 287 000 ms => « 38:07 » ; plus d'une heure => « 1:02:05 »
+function fmtClock(ms) {
+  const s = Math.floor((ms || 0) / 1000), hh = Math.floor(s / 3600), mm = Math.floor(s / 60) % 60;
+  return hh ? `${hh}:${pad2(mm)}:${pad2(s % 60)}` : `${mm}:${pad2(s % 60)}`;
+}
+// 3 150 000 ms => « 52 min » ; 3 900 000 ms => « 1 h 05 »
+function fmtMin(ms) {
+  const m = Math.round(ms / 60e3);
+  return m >= 60 ? `${Math.floor(m / 60)} h ${pad2(m % 60)}` : `${m} min`;
+}
+const fmtHour = t => { const d = new Date(t); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+function editClock(date, name, fn) {
+  const id = sessionId(date, name);
+  const rec = db.sessions[id] || (db.sessions[id] = { id, date, name, entries: {} });
+  rec.clock = rec.clock || { start: null, end: null, pauseMs: 0, pausedAt: null };
+  fn(rec.clock, Date.now());
+  rec.updatedAt = Date.now();
+  rec.deleted = false;
+  save();
+}
+// Le chrono affiché (en-tête de séance, bouton Terminer, barre du minuteur) avance chaque seconde.
+setInterval(() => {
+  document.querySelectorAll('[data-clock]').forEach(el => { el.textContent = fmtClock(sessionDuration(db.sessions[el.dataset.clock])); });
+}, 1000);
 
 // ---------- Minuteur de repos ----------
 const timerEl = document.getElementById('timer');
@@ -235,9 +283,9 @@ function timerSignals(profile, total) {
   ev.push({ left: 0, kind: 'end' });
   return ev;
 }
-function startTimer(seconds, label) {
+function startTimer(seconds, label, sid) {
   unlockAudio();
-  timer = { end: Date.now() + seconds * 1000, total: seconds, label, played: new Set(), shown: null };
+  timer = { end: Date.now() + seconds * 1000, total: seconds, label, sid, played: new Set(), shown: null };
   tickTimer();
 }
 function stopTimer() { timer = null; renderTimer(); }
@@ -266,7 +314,8 @@ function renderTimer() {
   }
   timerEl.className = left <= 10 ? 'warn' : '';
   timerEl.replaceChildren(
-    h('div', { class: 't' }, `${Math.floor(left / 60)}:${pad2(left % 60)}`),
+    h('div', { class: 't' }, `${Math.floor(left / 60)}:${pad2(left % 60)}`,
+      db.sessions[timer.sid]?.clock?.start ? h('small', {}, 'Séance ', h('span', { 'data-clock': timer.sid }, fmtClock(sessionDuration(db.sessions[timer.sid])))) : null),
     h('button', { class: 'gear', 'aria-label': 'Réglages du minuteur', onclick: openRestSheet }, gearIcon()),
     h('button', { onclick: addTimer30 }, '+30 s'),
     h('button', { onclick: stopTimer }, 'Stop'));
@@ -392,7 +441,7 @@ function viewHome() {
     h('h2', {}, 'Dernières séances'),
     recs.length ? h('div', { class: 'card' }, recs.slice(0, 6).map(r => h('a', { class: 'list-item', href: `#/seance/${encodeURIComponent(r.name)}/${r.date}` },
       h('span', {}, `${cap(fmtDateLong(r.date))}, ${r.name}`),
-      h('span', { class: 'sub' }, `${setsDone(r)} séries · ${sessionVolume(r).toLocaleString('fr-FR')} kg`)))) : h('p', { class: 'muted' }, 'Aucune séance enregistrée pour l\'instant.'));
+      h('span', { class: 'sub' }, `${r.clock?.start ? fmtMin(sessionDuration(r)) + ' · ' : ''}${setsDone(r)} série${setsDone(r) > 1 ? 's' : ''} ·${sessionVolume(r).toLocaleString('fr-FR')} kg`)))) : h('p', { class: 'muted' }, 'Aucune séance enregistrée pour l\'instant.'));
 }
 
 function viewSession(name, date) {
@@ -441,9 +490,17 @@ function viewSession(name, date) {
         st.kg = num(kgIn.value); st.reps = num(repIn.value);
         st.done = !st.done;
         if (st.done && !(st.reps > 0 && st.kg != null)) { st.done = false; return; }
+        if (st.done) st.t = Date.now(); else delete st.t;
         commit(date, name, ex, entry);
         if (st.done) {
-          startTimer(ex.rest, ex.name);
+          // Le chrono démarre seul à la première série validée ; une série validée après « Terminer » rouvre la séance.
+          const c = db.sessions[id].clock;
+          if (!c?.start || c.end || c.pausedAt) editClock(date, name, (k, now) => {
+            if (!k.start) k.start = now;
+            if (k.pausedAt) { k.pauseMs += now - k.pausedAt; k.pausedAt = null; }
+            k.end = null;
+          });
+          startTimer(ex.rest, ex.name, id);
           if (doneSets(entry).length >= entry.sets.length) {
             const idx = list.indexOf(ex);
             const nxt = list.slice(idx + 1).find(e => doneSets(db.sessions[id]?.entries?.[e.id]).length < e.sets);
@@ -472,12 +529,36 @@ function viewSession(name, date) {
   });
 
   const done = setsDone(rec);
+  const c = rec?.clock, ended = !!c?.end;
+  const clockAct = (label, fn) => h('button', { class: 'btn secondary small tight', onclick: () => { editClock(date, name, fn); redraw(); } }, label);
+  let clockSub, clockBtn;
+  if (!c?.start) { clockSub = 'Le chrono démarre à ta 1re série validée'; clockBtn = clockAct('▶ Démarrer', (k, now) => { k.start = now; }); }
+  else if (ended) { clockSub = `Terminée · ${fmtHour(c.start)} → ${fmtHour(c.end)}`; clockBtn = clockAct('Reprendre', k => { k.end = null; }); }
+  else if (c.pausedAt) { clockSub = 'En pause'; clockBtn = clockAct('▶ Reprendre', (k, now) => { k.pauseMs += now - k.pausedAt; k.pausedAt = null; }); }
+  else if (clockLive(rec)) { clockSub = `Commencée à ${fmtHour(c.start)}`; clockBtn = clockAct('⏸ Pause', (k, now) => { k.pausedAt = now; }); }
+  else { clockSub = `Arrêté à la dernière série (${fmtHour(clockEnd(rec))})`; clockBtn = null; }
+  const finish = () => {
+    editClock(date, name, (k, now) => {
+      if (!k.start) k.start = now;
+      // En pause, la séance se termine au moment de la pause ; si le chrono s'était arrêté seul, à la dernière série.
+      k.end = k.pausedAt || clockEnd(db.sessions[id], now); k.pausedAt = null;
+    });
+    stopTimer(); redraw();
+  };
   mount(
     h('div', { class: 'row between' }, h('a', { href: '#/' }, '‹ Accueil'), syncChip()),
     h('h1', {}, name),
     h('div', { class: 'sub' }, `${cap(fmtDateLong(date))} · ${done}/${total} séries${rec ? ' · ' + sessionVolume(rec).toLocaleString('fr-FR') + ' kg de volume' : ''}`),
+    h('div', { class: 'sclock' + (clockLive(rec) ? ' live' : '') },
+      h('div', { class: 't' }, h('span', { 'data-clock': id }, fmtClock(sessionDuration(rec))), h('small', {}, clockSub)),
+      clockBtn),
     cards,
-    done ? h('a', { class: 'btn', href: '#/', style: 'margin-top:12px' }, 'Terminer la séance') : null);
+    done && !ended ? h('button', { class: 'btn end', style: 'margin-top:12px', onclick: finish }, '✓ Terminer la séance · ', h('span', { 'data-clock': id }, fmtClock(sessionDuration(rec)))) : null,
+    ended ? h('div', { class: 'card', style: 'text-align:center;margin-top:12px' },
+      h('b', {}, 'Séance terminée'),
+      h('div', { class: 'sub' }, `${fmtMin(sessionDuration(rec))} · ${done} série${done > 1 ? 's' : ''} ·${fmtHour(c.start)} → ${fmtHour(c.end)}`),
+      h('div', { style: 'height:10px' }),
+      h('a', { class: 'btn secondary', href: '#/' }, 'Retour à l\'accueil')) : null);
 }
 
 // Flèche de jugement de la charge (style « teinte douce avec légende »).
@@ -492,8 +573,19 @@ const loadTag = l => l === 'up' ? h('span', { class: 'tag up' }, '↑ Légère')
 function viewHistory() {
   setTab('hist');
   const rows = Object.values(EXERCISES).map(ex => ({ ex, hist: history(ex.id) })).filter(x => x.hist.length);
+  const recs = Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).sort((a, b) => b.date.localeCompare(a.date));
+  const week = recs.filter(r => r.date >= weekStart()), timed = week.filter(r => r.clock?.start);
+  const weekMs = timed.reduce((a, r) => a + sessionDuration(r), 0);
   mount(
     h('h1', {}, 'Historique'),
+    h('div', { class: 'card' },
+      h('b', {}, 'Cette semaine'),
+      h('div', { class: 'list-item' }, h('span', {}, `${week.length} séance${week.length > 1 ? 's' : ''}`), h('span', { class: 'sub' }, timed.length ? `${fmtMin(weekMs)} au total` : 'durée non mesurée')),
+      timed.length ? h('div', { class: 'list-item' }, h('span', {}, 'Durée moyenne'), h('span', { class: 'sub' }, fmtMin(weekMs / timed.length))) : null),
+    recs.length ? [h('h2', {}, 'Séances'), h('div', { class: 'card' }, recs.slice(0, 10).map(r => h('a', { class: 'list-item', href: `#/seance/${encodeURIComponent(r.name)}/${r.date}` },
+      h('span', {}, `${cap(fmtDate(r.date))}, ${r.name}`),
+      h('span', { class: 'sub' }, r.clock?.start ? `${fmtMin(sessionDuration(r))} · ${fmtHour(r.clock.start)} → ${fmtHour(clockEnd(r))}` : `${setsDone(r)} séries`))))] : null,
+    h('h2', {}, 'Exercices'),
     rows.length ? h('div', { class: 'card' }, rows.map(({ ex, hist }) => {
       const last = hist[hist.length - 1], best = bestE1rm(last.sets);
       return h('a', { class: 'list-item', href: `#/ex/${ex.id}` },
@@ -753,10 +845,11 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 function toCsv() {
-  const lines = ['date;seance;exercice;serie;kg;reps;reserve;charge'];
+  const lines = ['date;seance;exercice;serie;kg;reps;reserve;charge;duree_seance_min'];
   for (const r of Object.values(db.sessions).filter(x => !x.deleted).sort((a, b) => a.date.localeCompare(b.date))) {
+    const dur = r.clock?.start ? Math.round(sessionDuration(r) / 60e3) : '';
     for (const [exId, e] of Object.entries(r.entries || {})) {
-      doneSets(e).forEach((x, i) => lines.push([r.date, r.name, EXERCISES[exId]?.name || exId, i + 1, String(x.kg).replace('.', ','), x.reps, x.rir, e.load === 'up' ? 'trop legere' : e.load === 'down' ? 'trop lourde' : ''].join(';')));
+      doneSets(e).forEach((x, i) => lines.push([r.date, r.name, EXERCISES[exId]?.name || exId, i + 1, String(x.kg).replace('.', ','), x.reps, x.rir, e.load === 'up' ? 'trop legere' : e.load === 'down' ? 'trop lourde' : '', dur].join(';')));
     }
   }
   return lines.join('\n');
