@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '23 (remplacer un exercice)';
+const APP_VERSION = '24 (balance Withings)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -754,18 +754,24 @@ function viewBody() {
   const fM = h('input', { type: 'text', inputmode: 'decimal', placeholder: '%' });
   const fMeas = Object.fromEntries(MEASURES.map(m => [m.key, h('input', { type: 'text', inputmode: 'decimal', placeholder: 'cm' })]));
   const existing = d => db.body[d] && !db.body[d].deleted ? db.body[d] : null;
+  // ⚖ à côté du champ quand la valeur affichée vient de la balance Withings.
+  const wP = h('span', { class: 'wb', hidden: true }, '⚖'), wM = h('span', { class: 'wb', hidden: true }, '⚖');
   const fill = () => {
     const e = existing(fDate.value);
     fP.value = e?.poids != null ? fmtKg(e.poids) : ''; fM.value = e?.mg != null ? fmtKg(e.mg) : '';
     for (const m of MEASURES) fMeas[m.key].value = e?.[m.key] != null ? fmtKg(e[m.key]) : '';
+    wP.hidden = e?.src?.poids !== 'withings'; wM.hidden = e?.src?.mg !== 'withings';
   };
   fDate.addEventListener('change', fill);
+  fill();
   const add = h('button', { class: 'btn', onclick: () => {
     const vals = { poids: num(fP.value), mg: num(fM.value), ...Object.fromEntries(MEASURES.map(m => [m.key, num(fMeas[m.key].value)])) };
     if (!fDate.value || Object.values(vals).every(v => v == null)) return;
     const prev = existing(fDate.value) || {};
     const rec = { ...prev, id: fDate.value, date: fDate.value, updatedAt: Date.now() };
     for (const [k, v] of Object.entries(vals)) rec[k] = v ?? prev[k] ?? null;
+    // Une valeur changée à la main n'est plus « Withings » ; l'import ne l'écrasera plus pour ce jour-là.
+    for (const k of ['poids', 'mg']) if (vals[k] != null && vals[k] !== prev[k]) rec.src = { ...rec.src, [k]: 'manuel' };
     db.body[fDate.value] = rec;
     save(); viewBody();
   } }, 'Enregistrer');
@@ -791,16 +797,19 @@ function viewBody() {
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Corps'), syncChip()),
     last ? h('div', { class: 'card' },
-      h('div', { class: 'sub' }, `Dernière pesée, ${fmtDate(last.date)}`),
-      h('div', { class: 'big' }, `${fmtKg(last.poids)} kg`),
+      h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Dernière pesée, ${fmtDate(last.date)}${last.src?.poids === 'withings' && last.withings?.at ? ' ' + fmtHour(last.withings.at) : ''}`),
+        last.src?.poids === 'withings' ? h('span', { class: 'wb' }, '⚖ Withings') : null),
+      h('div', { class: 'row', style: 'align-items:baseline;gap:18px' }, h('div', { class: 'big' }, `${fmtKg(last.poids)} kg`),
+        last.mg != null ? h('div', { class: 'mid' }, `${fmtKg(last.mg)} %`) : null),
       prevW ? h('div', { class: 'sub delta ' + (last.poids <= prevW.poids ? 'up' : 'down') }, `${last.poids - prevW.poids > 0 ? '+' : ''}${fmtKg(Math.round((last.poids - prevW.poids) * 10) / 10)} kg depuis ${fmtDate(prevW.date)}`) : null) : null,
     h('div', { class: 'card' },
       h('label', { class: 'field' }, h('span', {}, 'Date'), fDate),
       h('div', { class: 'grid2' },
-        h('label', { class: 'field' }, h('span', {}, 'Poids (kg)'), fP),
-        h('label', { class: 'field' }, h('span', {}, 'Masse grasse (%)'), fM)),
+        h('label', { class: 'field' }, h('span', {}, 'Poids (kg) ', wP), fP),
+        h('label', { class: 'field' }, h('span', {}, 'Masse grasse (%) ', wM), fM)),
       h('div', { class: 'grid2' }, MEASURES.map(m => h('label', { class: 'field' }, h('span', {}, `${m.label} (cm)`), fMeas[m.key]))),
       add,
+      wstate?.connected ? h('p', { class: 'sub' }, '⚖ = valeur importée de Withings. Tu peux la corriger ou saisir à la main ; les mensurations restent manuelles.') : null,
       h('details', { style: 'margin-top:10px' }, h('summary', { class: 'sub' }, 'Comment mesurer'),
         h('p', { class: 'sub' }, 'Mètre ruban à plat, non serré, le matin, toujours au même endroit et du même côté du corps.'),
         h('ul', { class: 'sub' }, MEASURES.map(m => h('li', {}, `${m.label} : ${m.hint}.`))))),
@@ -811,8 +820,9 @@ function viewBody() {
     pts('mg').length ? [h('h2', {}, 'Masse grasse'), lineChart([{ name: 'Masse grasse', points: pts('mg') }], '%')] : null,
     MEASURES.map(m => pts(m.key).length ? [h('h2', {}, m.label), lineChart([{ name: m.label, points: pts(m.key) }], 'cm')] : null),
     h('details', {}, h('summary', {}, 'Toutes les mesures'),
-      h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'kg'), h('th', {}, '% gras'), MEASURES.map(m => h('th', {}, m.short))),
-        [...list].reverse().map(b => h('tr', {}, h('td', {}, fmtDate(b.date)), h('td', {}, fmtKg(b.poids) || '–'), h('td', {}, fmtKg(b.mg) || '–'), MEASURES.map(m => h('td', {}, fmtKg(b[m.key]) || '–')))))));
+      h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'kg'), h('th', {}, '% gras'), MEASURES.map(m => h('th', {}, m.short)), h('th', {})),
+        [...list].reverse().map(b => h('tr', {}, h('td', {}, fmtDate(b.date)), h('td', {}, fmtKg(b.poids) || '–'), h('td', {}, fmtKg(b.mg) || '–'), MEASURES.map(m => h('td', {}, fmtKg(b[m.key]) || '–')),
+          h('td', {}, Object.values(b.src || {}).includes('withings') ? h('span', { class: 'wb' }, '⚖') : b.poids != null || b.mg != null ? h('span', { class: 'mb' }, '✎') : ''))))));
 }
 
 // ---------- Synchronisation GitHub ----------
@@ -967,6 +977,7 @@ async function syncNow(manual) {
       } catch (e) { if (!e.conflict || attempt) throw e; }
     }
     if (await pullPrograms()) localChanged = true;
+    await pullWithings();
     sync.state = 'ok'; const d = new Date(); sync.at = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; sync.msg = '';
     const nS = Object.values(db.sessions).filter(r => !r.deleted).length, nB = Object.values(db.body).filter(b => !b.deleted).length;
     sync.info = `${nS} séance${nS > 1 ? 's' : ''} et ${nB} mesure${nB > 1 ? 's' : ''} sur GitHub.`;
@@ -1011,6 +1022,75 @@ function syncSummary() {
   const st = { off: ['', 'Non configurée'], idle: ['', 'Prête'], busy: ['', 'Synchronisation…'], ok: ['ok', `Synchronisé à ${sync.at || ''}`], err: ['err', 'Erreur de synchro'] }[sync.state];
   return [h('span', { class: 'dot ' + st[0] }), st[1]];
 }
+// ---------- Balance Withings ----------
+// L'import se fait sur le PC (dashboard). L'iPhone lit son état et règle la récupération automatique,
+// partagés dans withings.json du dépôt privé (à côté de data.json).
+const WKEY = 'muscu.withings';
+let wstate = load(WKEY, null);
+const wUrl = () => ghUrl().replace(/[^/]+$/, 'withings.json');
+const decodeContent = j => JSON.parse(decodeURIComponent(escape(atob(j.content.replace(/\n/g, '')))));
+async function pullWithings() {
+  try {
+    const r = await ghFetch(wUrl(), { headers: ghHeaders(), cache: 'no-store' });
+    if (!r.ok) return; // 404 : Withings jamais connecté
+    wstate = decodeContent(await r.json()); store(WKEY, wstate);
+  } catch (e) { slog(`État Withings non lu : ${e.message}`); }
+}
+async function setWithingsAuto(auto) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = await ghFetch(wUrl(), { headers: ghHeaders(), cache: 'no-store' });
+    if (!r.ok && r.status !== 404) throw new Error(`GitHub ${r.status}`);
+    const j = r.status === 404 ? null : await r.json();
+    const next = { ...(j ? decodeContent(j) : {}), auto, autoAt: Date.now() };
+    const body = { message: `withings réglage ${new Date().toISOString()}`, content: btoa(unescape(encodeURIComponent(JSON.stringify(next, null, 1)))) };
+    if (j) body.sha = j.sha;
+    const p = await ghFetch(wUrl(), { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) });
+    if (p.status === 409 || p.status === 422) continue;
+    if (!p.ok) throw new Error(`GitHub ${p.status}`);
+    wstate = next; store(WKEY, wstate);
+    return;
+  }
+  throw new Error('conflit, réessaie');
+}
+const scaleIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('rect', { x: 4, y: 4, width: 16, height: 16, rx: 4 }), s('path', { d: 'M8.5 10a5 5 0 0 1 7 0M12 10.5 13.5 8' }));
+const lastWithings = () => Object.values(db.body).filter(b => !b.deleted && b.withings?.at).sort((a, b) => b.withings.at - a.withings.at)[0];
+const whenTxt = ms => `${fmtDate(ymd(new Date(ms)))} ${fmtHour(ms)}`;
+function withingsSummary() {
+  if (!wstate?.connected) return 'Non connectée (à faire sur le PC)';
+  if (wstate.auto === false) return 'Désactivée · saisie manuelle';
+  const l = lastWithings();
+  return `Automatique${l ? ` · dernière pesée ${whenTxt(l.withings.at)}` : ''}`;
+}
+function viewWithings() {
+  setTab('set');
+  const st = wstate || {}, l = lastWithings();
+  const msg = h('div', { class: 'sub' });
+  const tog = h('input', { type: 'checkbox', class: 'switch', checked: st.auto !== false, disabled: !cfgOk(), 'aria-label': 'Récupération automatique' });
+  tog.addEventListener('change', async () => {
+    tog.disabled = true; msg.textContent = 'Enregistrement…';
+    try {
+      await setWithingsAuto(tog.checked);
+      msg.textContent = tog.checked ? 'Activée : le PC importera tes pesées chaque matin.' : 'Désactivée : plus rien n\'est importé, la saisie reste manuelle.';
+    } catch (e) { tog.checked = !tog.checked; msg.textContent = `Échec : ${e.message}`; }
+    tog.disabled = false;
+  });
+  const kv = (k, v) => [h('span', { class: 'sub' }, k), h('span', {}, v)];
+  mount(
+    h('div', { class: 'row between' }, h('a', { href: '#/reglages' }, '‹ Réglages'), syncChip()),
+    h('h1', {}, 'Balance Withings'),
+    h('div', { class: 'card' },
+      h('label', { class: 'row between' }, h('span', {}, h('b', {}, 'Récupération automatique'), h('div', { class: 'sub' }, 'Poids et masse grasse, chaque matin')), tog),
+      cfgOk() ? msg : h('div', { class: 'sub' }, 'Configure d\'abord la synchronisation GitHub.')),
+    h('div', { class: 'card' },
+      h('div', { class: 'kvg' },
+        kv('État', st.connected ? 'Connectée (sur le PC)' : 'Non connectée : la connexion se fait dans le dashboard du PC, onglet Corps'),
+        l ? kv('Dernière pesée', `${whenTxt(l.withings.at)} · ${fmtKg(l.withings.poids)} kg${l.withings.mg != null ? ` · ${fmtKg(l.withings.mg)} %` : ''}`) : null,
+        st.lastImport ? kv('Dernier import', whenTxt(st.lastImport)) : null,
+        st.since ? kv('Depuis le', fmtDate(st.since)) : null,
+        st.lastError ? kv('Erreur', st.lastError) : null),
+      h('p', { class: 'sub' }, 'L\'import se fait sur le PC : s\'il est éteint, la pesée arrive à son prochain démarrage, puis sur l\'iPhone à la synchro suivante. Désactivée, plus rien n\'est importé et la saisie reste manuelle.')));
+}
+
 function viewSettings() {
   setTab('set');
   syncEditing = false; // une modification de connexion abandonnée n'est pas reprise au retour
@@ -1020,6 +1100,7 @@ function viewSettings() {
     h('div', { class: 'navlist' },
       navRow('#/repos', timerIcon(), '', 'Minuteur de repos', restSummary()),
       navRow('#/sync', syncIcon(), 'gh', 'Synchronisation GitHub', syncSummary(), 'sync-sum'),
+      navRow('#/withings', scaleIcon(), 'scale', 'Balance Withings', withingsSummary()),
       navRow('#/sauvegarde', saveIcon(), 'data', 'Sauvegarde', 'Exporter, importer')),
     standalone ? null : [h('h2', {}, 'Installer sur l\'iPhone'),
       h('p', { class: 'sub' }, 'Dans Safari : bouton Partager, puis « Sur l\'écran d\'accueil ». L\'appli s\'ouvrira ensuite en plein écran et fonctionnera sans réseau.')],
@@ -1190,6 +1271,7 @@ function render() {
     case 'repos': return viewRest();
     case 'sync': return viewSync();
     case 'sauvegarde': return viewBackup();
+    case 'withings': return viewWithings();
     default: return viewHome();
   }
 }

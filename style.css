@@ -212,3 +212,17 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .tag.up { color: var(--good); font-weight: 600; }
 .tag.down { color: var(--bad); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .lchip, .lchip::after { transition: none; } }
+/* Balance Withings */
+.wb, .mb { display: inline-block; font-size: 11.5px; font-weight: 700; border-radius: 6px; padding: 1px 6px; white-space: nowrap; }
+.wb { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.mb { color: var(--ink-2); background: var(--field); }
+.mid { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.navrow .ic.scale { background: var(--good); }
+.switch { appearance: none; -webkit-appearance: none; flex: none; width: 50px; height: 30px; border-radius: 15px; background: var(--grid); position: relative; margin: 0; cursor: pointer; transition: background-color .15s; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: left .15s; }
+.switch:checked { background: var(--good); }
+.switch:checked::after { left: 23px; }
+.switch:disabled { opacity: .5; }
+.field span.wb { display: inline-block; width: auto; margin: 0 0 0 4px; padding: 0 5px; }
+.field span.wb[hidden] { display: none; }
+.kvg { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; font-size: 15px; }
