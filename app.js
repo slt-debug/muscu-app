@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '26 (pas : semaine lun-dim)';
+const APP_VERSION = '27 (historique en rubriques)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -698,28 +698,83 @@ function loadIcon(kind, on, onclick) {
 }
 const loadTag = l => l === 'up' ? h('span', { class: 'tag up' }, '↑ Légère') : l === 'down' ? h('span', { class: 'tag down' }, '↓ Lourde') : '–';
 
-function viewHistory() {
+// Historique : bilan de la semaine et deux rubriques (comme Réglages) qui ouvrent leur page.
+const doneRecs = () => Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).sort((a, b) => b.date.localeCompare(a.date));
+const exRows = () => Object.values(EXERCISES).map(ex => ({ ex, hist: history(ex.id) })).filter(x => x.hist.length);
+const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
+const sessionsIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('rect', { x: 4, y: 5, width: 16, height: 15, rx: 2 }), s('path', { d: 'M4 10h16M9 3v4M15 3v4' }));
+const exercisesIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('path', { d: 'M3 9v6M6 7v10M18 7v10M21 9v6M6 12h12' }));
+function viewHistory(sub) {
+  if (sub === 'seances') return viewHistorySessions();
+  if (sub === 'exercices') return viewHistoryExercises();
   setTab('hist');
-  const rows = Object.values(EXERCISES).map(ex => ({ ex, hist: history(ex.id) })).filter(x => x.hist.length);
-  const recs = Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).sort((a, b) => b.date.localeCompare(a.date));
+  const recs = doneRecs(), rows = exRows();
   const week = recs.filter(r => r.date >= weekStart()), timed = week.filter(r => r.clock?.start);
   const weekMs = timed.reduce((a, r) => a + sessionDuration(r), 0);
   mount(
     h('h1', {}, 'Historique'),
     h('div', { class: 'card' },
       h('b', {}, 'Cette semaine'),
-      h('div', { class: 'list-item' }, h('span', {}, `${week.length} séance${week.length > 1 ? 's' : ''}`), h('span', { class: 'sub' }, timed.length ? `${fmtMin(weekMs)} au total` : 'durée non mesurée')),
+      h('div', { class: 'list-item' }, h('span', {}, plural(week.length, 'séance')), h('span', { class: 'sub' }, timed.length ? `${fmtMin(weekMs)} au total` : 'durée non mesurée')),
       timed.length ? h('div', { class: 'list-item' }, h('span', {}, 'Durée moyenne'), h('span', { class: 'sub' }, fmtMin(weekMs / timed.length))) : null),
-    recs.length ? [h('h2', {}, 'Séances'), h('div', { class: 'card' }, recs.slice(0, 10).map(r => h('a', { class: 'list-item', href: `#/seance/${encodeURIComponent(r.name)}/${r.date}` },
-      h('span', {}, `${cap(fmtDate(r.date))}, ${r.name}`),
-      h('span', { class: 'sub' }, r.clock?.start ? `${fmtMin(sessionDuration(r))} · ${fmtHour(r.clock.start)} → ${fmtHour(clockEnd(r))}` : `${setsDone(r)} séries`))))] : null,
-    h('h2', {}, 'Exercices'),
-    rows.length ? h('div', { class: 'card' }, rows.map(({ ex, hist }) => {
-      const last = hist[hist.length - 1], best = bestE1rm(last.sets);
-      return h('a', { class: 'list-item', href: `#/ex/${ex.id}` },
-        h('span', {}, ex.name),
-        h('span', { class: 'sub' }, best ? `${fmtKg(best)} kg (1RM est.)` : `${last.sets.length} séries`));
-    })) : h('p', { class: 'muted' }, 'Aucune donnée. Valide une série pendant une séance pour commencer.'));
+    recs.length || rows.length ? h('div', { class: 'navlist' },
+      navRow('#/historique/seances', sessionsIcon(), '', 'Séances', recs.length ? `${plural(recs.length, 'séance')} · dernière ${recs[0].name}, ${fmtDate(recs[0].date)}` : 'Aucune séance'),
+      navRow('#/historique/exercices', exercisesIcon(), 'ex', 'Exercices', `${plural(rows.length, 'exercice')} ${rows.length > 1 ? 'suivis' : 'suivi'} · 1RM, progression`))
+      : h('p', { class: 'muted' }, 'Aucune donnée. Valide une série pendant une séance pour commencer.'));
+}
+// Toutes les séances, groupées par semaine (du lundi), avec le nombre et le temps total de chaque semaine.
+function viewHistorySessions() {
+  setTab('hist');
+  const weekOf = str => { const d = parseYmd(str); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return ymd(d); };
+  const groups = [];
+  for (const r of doneRecs()) {
+    const w = weekOf(r.date);
+    if (!groups.length || groups[groups.length - 1].w !== w) groups.push({ w, recs: [] });
+    groups[groups.length - 1].recs.push(r);
+  }
+  mount(
+    h('a', { class: 'back', href: '#/historique' }, '‹ Historique'),
+    h('h1', {}, 'Séances'),
+    groups.length ? groups.map(({ w, recs }) => {
+      const ms = recs.filter(r => r.clock?.start).reduce((a, r) => a + sessionDuration(r), 0);
+      return [h('div', { class: 'grp-head' }, h('span', {}, `Semaine du ${fmtDate(w)}`), h('span', {}, `${recs.length}${ms ? ' · ' + fmtMin(ms) : ''}`)),
+        h('div', { class: 'card' }, recs.map(r => h('a', { class: 'list-item', href: `#/seance/${encodeURIComponent(r.name)}/${r.date}` },
+          h('span', {}, `${cap(JOURS[parseYmd(r.date).getDay()].slice(0, 3))}. ${fmtDate(r.date)}, ${r.name}`),
+          h('span', { class: 'sub' }, r.clock?.start ? fmtMin(sessionDuration(r)) : plural(setsDone(r), 'série')))))];
+    }) : h('p', { class: 'muted' }, 'Aucune séance pour l\'instant.'));
+}
+// Exercices regroupés par groupe musculaire, avec recherche. Valeur = 1RM estimé de la dernière séance ;
+// ↑ quand il dépasse celui d'il y a jusqu'à 3 séances.
+const HIST_GROUPS = ['Pecs', 'Dos', 'Épaules', 'Bras', 'Jambes', 'Abdos', 'Cardio'];
+function viewHistoryExercises() {
+  setTab('hist');
+  const norm = t => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const groupOf = ex => ex.group || CATALOG.find(c => c.id === ex.id)?.group || 'Autres';
+  const rows = exRows().map(({ ex, hist }) => {
+    const e = hist.map(x => bestE1rm(x.sets)).filter(v => v != null), last = hist[hist.length - 1];
+    const ref = e.length > 1 ? e[Math.max(0, e.length - 4)] : null;
+    return { ex, grp: groupOf(ex), best: bestE1rm(last.sets), n: last.sets.length, up: ref != null && e[e.length - 1] > ref };
+  });
+  const box = h('div');
+  const search = h('input', { type: 'search', class: 'swapsearch', placeholder: 'Chercher un exercice', oninput: () => fill() });
+  const fill = () => {
+    const q = norm(search.value.trim());
+    const shown = rows.filter(r => !q || norm(r.ex.name).includes(q));
+    const order = [...HIST_GROUPS, 'Autres'];
+    box.replaceChildren(...(shown.length ? order.filter(g => shown.some(r => r.grp === g)).flatMap(g => [
+      h('div', { class: 'grp-head' }, h('span', {}, g)),
+      h('div', { class: 'card' }, shown.filter(r => r.grp === g).sort((a, b) => a.ex.name.localeCompare(b.ex.name, 'fr')).map(r => h('a', { class: 'list-item', href: `#/ex/${r.ex.id}` },
+        h('span', {}, r.ex.name),
+        h('span', { class: 'sub' }, r.best ? `${fmtKg(r.best)} kg` : plural(r.n, 'série'), r.up ? h('span', { class: 'up-mark', title: 'En progression' }, ' ↑') : null))))])
+      : [h('p', { class: 'muted' }, rows.length ? 'Aucun exercice trouvé.' : 'Aucune donnée pour l\'instant.')]));
+  };
+  fill();
+  mount(
+    h('a', { class: 'back', href: '#/historique' }, '‹ Historique'),
+    h('h1', {}, 'Exercices'),
+    rows.length ? search : null,
+    box,
+    rows.length ? h('p', { class: 'sub' }, 'Valeur = 1RM estimé de la dernière séance ; ↑ = en progression sur les dernières séances.') : null);
 }
 
 function viewExercise(exId) {
@@ -729,7 +784,8 @@ function viewExercise(exId) {
   const hist = history(exId);
   const pts = hist.map(x => ({ t: parseYmd(x.date).getTime(), v: bestE1rm(x.sets), label: x.sets.map(s2 => `${fmtKg(s2.kg)}×${s2.reps}`).join(' ') })).filter(p => p.v != null);
   mount(
-    h('a', { href: '#/historique' }, '‹ Historique'),
+    // Ouvert depuis une séance ou depuis la liste des exercices : on revient d'où l'on vient.
+    exFrom.startsWith('#/seance/') ? h('a', { href: exFrom }, '‹ Séance') : h('a', { href: '#/historique/exercices' }, '‹ Exercices'),
     h('h1', {}, ex.name),
     h('div', { class: 'sub' }, '1RM estimé par séance (formule d\'Epley, meilleure série)'),
     pts.length ? lineChart([{ name: '1RM estimé', points: pts }], 'kg') : h('p', { class: 'muted' }, hist.length ? 'Exercice au poids du corps : pas de courbe de 1RM.' : 'Pas encore de données.'),
@@ -991,7 +1047,8 @@ async function syncNow(manual) {
   if (isManual) { sync.flashUntil = Date.now() + 2000; setTimeout(refreshChips, 2100); }
   refreshChips();
   // Des données distantes sont arrivées : on redessine les vues de lecture (pas la séance en cours de saisie).
-  const readOnlyView = ['', '#/', '#/historique'].includes(location.hash) || location.hash.startsWith('#/ex/');
+  // (la page Exercices garde sa recherche en cours : pas de redessin.)
+  const readOnlyView = ['', '#/', '#/historique', '#/historique/seances'].includes(location.hash) || location.hash.startsWith('#/ex/');
   if (localChanged && readOnlyView) render();
 }
 
@@ -1299,12 +1356,16 @@ function openRestSheet() {
 
 // ---------- Routage ----------
 function go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
+// Page d'où l'on a ouvert le détail d'un exercice (pour son lien de retour).
+let lastHash = '', exFrom = '';
 function render() {
+  if (location.hash.startsWith('#/ex/') && !lastHash.startsWith('#/ex/')) exFrom = lastHash;
+  lastHash = location.hash;
   const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   window.scrollTo(0, 0);
   switch (parts[0]) {
     case 'seance': return viewSession(parts[1], parts[2] || today());
-    case 'historique': return viewHistory();
+    case 'historique': return viewHistory(parts[1]);
     case 'ex': return viewExercise(parts[1]);
     case 'corps': return viewBody();
     case 'reglages': return viewSettings();
