@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '25 (pas quotidiens)';
+const APP_VERSION = '26 (pas : semaine lun-dim)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1050,19 +1050,31 @@ async function pullActivity() {
 }
 const STEP_GOAL = 10000;
 const fmtInt = n => Math.round(n).toLocaleString('fr-FR');
-// Carte « Pas d'hier » de l'onglet Corps : la veille, moyenne et 7 derniers jours terminés.
+// Carte « Pas d'hier » de l'onglet Corps : la veille, puis la semaine du lundi au dimanche
+// (jour en cours hachuré car partiel, jours à venir vides).
 function stepsCard() {
-  const days = Object.keys(activity?.days || {}).filter(d => d < today()).sort().slice(-7);
-  if (!days.length) return null;
-  const v = days.map(d => activity.days[d].pas), y = v[v.length - 1], avg = v.reduce((a, b) => a + b, 0) / v.length;
-  const M = Math.max(STEP_GOAL * 1.25, ...v);
+  const all = activity?.days || {};
+  const done = Object.keys(all).filter(d => d < today()).sort();
+  if (!done.length) return null;
+  const last = done[done.length - 1], y = all[last].pas;
+  const week = []; { const d = parseYmd(weekStart()); for (let i = 0; i < 7; i++) { week.push(ymd(d)); d.setDate(d.getDate() + 1); } }
+  const wDone = week.filter(d => d < today() && all[d]).map(d => all[d].pas);
+  const M = Math.max(STEP_GOAL * 1.25, ...week.map(d => all[d]?.pas || 0));
+  const bar = d => {
+    if (d > today()) return h('span', { class: 'future' });
+    const v = all[d]?.pas;
+    if (v == null) return h('span', { class: 'none' });
+    return h('span', { class: d === today() ? 'now' : v >= STEP_GOAL ? 'ok' : '', style: `height:${Math.max(3, v / M * 100)}%` });
+  };
   return h('div', { class: 'card' },
-    h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Pas ${days[days.length - 1] === ymd(new Date(Date.now() - 864e5)) ? 'd\'hier' : 'du'}, ${fmtDate(days[days.length - 1])}`), h('span', { class: 'wb' }, '⚖ Withings')),
+    h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Pas ${last === ymd(new Date(Date.now() - 864e5)) ? 'd\'hier' : 'du'}, ${fmtDate(last)}`), h('span', { class: 'wb' }, '⚖ Withings')),
     h('div', { class: 'row', style: 'align-items:baseline;gap:12px' }, h('div', { class: 'big' }, fmtInt(y)),
       h('span', { class: y >= STEP_GOAL ? 'steps-ok' : 'sub' }, y >= STEP_GOAL ? '✓ objectif atteint' : `${fmtInt(STEP_GOAL - y)} sous l'objectif`)),
-    h('div', { class: 'sub' }, `Moyenne ${v.length} jours : ${fmtInt(avg)} · ${v.filter(x => x >= STEP_GOAL).length}/${v.length} à ${fmtInt(STEP_GOAL)}`),
-    h('div', { class: 'stepbars', 'aria-hidden': 'true' }, v.map(x => h('span', { style: `height:${x / M * 100}%`, class: x >= STEP_GOAL ? 'ok' : '' })), h('i', { style: `bottom:${STEP_GOAL / M * 100}%` })),
-    h('div', { class: 'stepdays' }, days.map(d => h('span', {}, ['dim', 'lun', 'mar', 'mer', 'jeu', 'ven', 'sam'][parseYmd(d).getDay()]))));
+    h('div', { class: 'sub' }, wDone.length
+      ? `Cette semaine : ${wDone.filter(x => x >= STEP_GOAL).length}/${wDone.length} jour${wDone.length > 1 ? 's' : ''} à ${fmtInt(STEP_GOAL)} · moyenne ${fmtInt(wDone.reduce((a, b) => a + b, 0) / wDone.length)}`
+      : 'La semaine commence aujourd\'hui.'),
+    h('div', { class: 'stepbars', 'aria-hidden': 'true' }, week.map(bar), h('i', { style: `bottom:${STEP_GOAL / M * 100}%` })),
+    h('div', { class: 'stepdays' }, week.map(d => h('span', { class: d === today() ? 'today' : '' }, ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'][week.indexOf(d)]))));
 }
 async function setWithingsAuto(auto) {
   for (let attempt = 0; attempt < 2; attempt++) {

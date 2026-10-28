@@ -234,3 +234,6 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .stepbars i { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--ink-2); }
 .stepdays { display: flex; gap: 5px; font-size: 11px; color: var(--muted); margin-top: 3px; }
 .stepdays span { flex: 1; text-align: center; }
+.stepbars span.now { background: repeating-linear-gradient(135deg, var(--grid) 0 4px, transparent 4px 8px); box-shadow: inset 0 0 0 1px var(--grid); }
+.stepbars span.future, .stepbars span.none { height: 3px; background: var(--grid); opacity: .6; }
+.stepdays span.today { color: var(--ink); font-weight: 700; }
