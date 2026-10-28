@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '24 (balance Withings)';
+const APP_VERSION = '25 (pas quotidiens)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -796,6 +796,7 @@ function viewBody() {
 
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Corps'), syncChip()),
+    stepsCard(),
     last ? h('div', { class: 'card' },
       h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Dernière pesée, ${fmtDate(last.date)}${last.src?.poids === 'withings' && last.withings?.at ? ' ' + fmtHour(last.withings.at) : ''}`),
         last.src?.poids === 'withings' ? h('span', { class: 'wb' }, '⚖ Withings') : null),
@@ -978,6 +979,7 @@ async function syncNow(manual) {
     }
     if (await pullPrograms()) localChanged = true;
     await pullWithings();
+    await pullActivity();
     sync.state = 'ok'; const d = new Date(); sync.at = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; sync.msg = '';
     const nS = Object.values(db.sessions).filter(r => !r.deleted).length, nB = Object.values(db.body).filter(b => !b.deleted).length;
     sync.info = `${nS} séance${nS > 1 ? 's' : ''} et ${nB} mesure${nB > 1 ? 's' : ''} sur GitHub.`;
@@ -1036,6 +1038,32 @@ async function pullWithings() {
     wstate = decodeContent(await r.json()); store(WKEY, wstate);
   } catch (e) { slog(`État Withings non lu : ${e.message}`); }
 }
+// Pas quotidiens importés par le PC (activity.json, lecture seule ici).
+const AKEY = 'muscu.activity';
+let activity = load(AKEY, { days: {} });
+async function pullActivity() {
+  try {
+    const r = await ghFetch(ghUrl().replace(/[^/]+$/, 'activity.json'), { headers: ghHeaders(), cache: 'no-store' });
+    if (!r.ok) return;
+    activity = decodeContent(await r.json()); store(AKEY, activity);
+  } catch (e) { slog(`Pas non lus : ${e.message}`); }
+}
+const STEP_GOAL = 10000;
+const fmtInt = n => Math.round(n).toLocaleString('fr-FR');
+// Carte « Pas d'hier » de l'onglet Corps : la veille, moyenne et 7 derniers jours terminés.
+function stepsCard() {
+  const days = Object.keys(activity?.days || {}).filter(d => d < today()).sort().slice(-7);
+  if (!days.length) return null;
+  const v = days.map(d => activity.days[d].pas), y = v[v.length - 1], avg = v.reduce((a, b) => a + b, 0) / v.length;
+  const M = Math.max(STEP_GOAL * 1.25, ...v);
+  return h('div', { class: 'card' },
+    h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Pas ${days[days.length - 1] === ymd(new Date(Date.now() - 864e5)) ? 'd\'hier' : 'du'}, ${fmtDate(days[days.length - 1])}`), h('span', { class: 'wb' }, '⚖ Withings')),
+    h('div', { class: 'row', style: 'align-items:baseline;gap:12px' }, h('div', { class: 'big' }, fmtInt(y)),
+      h('span', { class: y >= STEP_GOAL ? 'steps-ok' : 'sub' }, y >= STEP_GOAL ? '✓ objectif atteint' : `${fmtInt(STEP_GOAL - y)} sous l'objectif`)),
+    h('div', { class: 'sub' }, `Moyenne ${v.length} jours : ${fmtInt(avg)} · ${v.filter(x => x >= STEP_GOAL).length}/${v.length} à ${fmtInt(STEP_GOAL)}`),
+    h('div', { class: 'stepbars', 'aria-hidden': 'true' }, v.map(x => h('span', { style: `height:${x / M * 100}%`, class: x >= STEP_GOAL ? 'ok' : '' })), h('i', { style: `bottom:${STEP_GOAL / M * 100}%` })),
+    h('div', { class: 'stepdays' }, days.map(d => h('span', {}, ['dim', 'lun', 'mar', 'mer', 'jeu', 'ven', 'sam'][parseYmd(d).getDay()]))));
+}
 async function setWithingsAuto(auto) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const r = await ghFetch(wUrl(), { headers: ghHeaders(), cache: 'no-store' });
@@ -1079,7 +1107,7 @@ function viewWithings() {
     h('div', { class: 'row between' }, h('a', { href: '#/reglages' }, '‹ Réglages'), syncChip()),
     h('h1', {}, 'Balance Withings'),
     h('div', { class: 'card' },
-      h('label', { class: 'row between' }, h('span', {}, h('b', {}, 'Récupération automatique'), h('div', { class: 'sub' }, 'Poids et masse grasse, chaque matin')), tog),
+      h('label', { class: 'row between' }, h('span', {}, h('b', {}, 'Récupération automatique'), h('div', { class: 'sub' }, 'Pesées et pas, chaque matin')), tog),
       cfgOk() ? msg : h('div', { class: 'sub' }, 'Configure d\'abord la synchronisation GitHub.')),
     h('div', { class: 'card' },
       h('div', { class: 'kvg' },

@@ -226,3 +226,11 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .field span.wb { display: inline-block; width: auto; margin: 0 0 0 4px; padding: 0 5px; }
 .field span.wb[hidden] { display: none; }
 .kvg { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; font-size: 15px; }
+/* Pas quotidiens (onglet Corps) */
+.steps-ok { color: var(--good); font-weight: 600; font-size: 14px; }
+.stepbars { position: relative; display: flex; gap: 5px; align-items: flex-end; height: 56px; margin-top: 10px; }
+.stepbars span { flex: 1; border-radius: 3px 3px 0 0; background: var(--grid); }
+.stepbars span.ok { background: var(--good); opacity: .75; }
+.stepbars i { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--ink-2); }
+.stepdays { display: flex; gap: 5px; font-size: 11px; color: var(--muted); margin-top: 3px; }
+.stepdays span { flex: 1; text-align: center; }
