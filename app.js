@@ -1071,7 +1071,7 @@ function stepsCard() {
     h('div', { class: 'row', style: 'align-items:baseline;gap:12px' }, h('div', { class: 'big' }, fmtInt(y)),
       h('span', { class: y >= STEP_GOAL ? 'steps-ok' : 'sub' }, y >= STEP_GOAL ? '✓ objectif atteint' : `${fmtInt(STEP_GOAL - y)} sous l'objectif`)),
     h('div', { class: 'sub' }, wDone.length
-      ? `Cette semaine : ${wDone.filter(x => x >= STEP_GOAL).length}/${wDone.length} jour${wDone.length > 1 ? 's' : ''} à ${fmtInt(STEP_GOAL)} · moyenne ${fmtInt(wDone.reduce((a, b) => a + b, 0) / wDone.length)}`
+      ? `Cette semaine : ${(k => `${k} jour${k > 1 ? 's' : ''}`)(wDone.filter(x => x >= STEP_GOAL).length)} sur ${wDone.length} à ${fmtInt(STEP_GOAL)} · moyenne ${fmtInt(wDone.reduce((a, b) => a + b, 0) / wDone.length)}`
       : 'La semaine commence aujourd\'hui.'),
     h('div', { class: 'stepbars', 'aria-hidden': 'true' }, week.map(bar), h('i', { style: `bottom:${STEP_GOAL / M * 100}%` })),
     h('div', { class: 'stepdays' }, week.map(d => h('span', { class: d === today() ? 'today' : '' }, ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'][week.indexOf(d)]))));
