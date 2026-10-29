@@ -1117,7 +1117,7 @@ const W_API = load('muscu.wapi', null) || 'https://wbsapi.withings.net'; // surc
 const W_AUTH_URL = 'https://account.withings.com/oauth2_user/authorize2';
 // Page relais déclarée chez Withings comme adresse de retour : elle renvoie la réponse vers l'appli.
 const W_RELAY = location.origin + location.pathname.replace(/[^/]*$/, '') + 'withings-callback.html';
-const W_SINCE = '2026-10-26'; // import à partir de cette date (choix de Stéphane)
+const W_SINCE = '2026-10-26'; // date de départ de l'import
 const W_YEAR = 365 * 864e5, W_EVERY = 120e3;
 const wConnected = () => !!wauth.refreshToken;
 const hasStepsScope = () => /user\.activity/.test(wauth.scope || '');
