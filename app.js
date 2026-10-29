@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '28 (saisie en volet)';
+const APP_VERSION = '29 (Withings sur l\'iPhone)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -76,7 +76,7 @@ function doneSets(entry) {
   return (entry?.sets || []).filter(x => x.done && x.reps > 0 && x.kg != null && x.kg >= 0);
 }
 // Historique d'un exercice, du plus ancien au plus récent (hors séance exclue).
-function history(exId, excludeId) {
+function exHistory(exId, excludeId) {
   return Object.values(db.sessions)
     .filter(r => !r.deleted && r.id !== excludeId && r.entries?.[exId])
     .sort((a, b) => a.date.localeCompare(b.date))
@@ -89,7 +89,7 @@ function bestE1rm(sets) {
 }
 // Double progression : toutes les séries au haut de la fourchette => on monte la charge.
 function suggest(ex, excludeId) {
-  const hist = history(ex.id, excludeId);
+  const hist = exHistory(ex.id, excludeId);
   if (!hist.length) {
     return { kg: ex.kg, reps: ex.lo, text: ex.kg == null ? 'Première fois : trouve une charge qui laisse 1 à 2 reps en réserve.' : `Charge de départ conseillée : ${fmtKg(ex.kg)} kg.` };
   }
@@ -655,7 +655,7 @@ function openSwap(ex, sessionRecId, taken, onPick) {
   const same = CATALOG.filter(c => c.group && c.group === group && c.id !== ex.id && !variants.includes(c.id));
   let showAll = !variants.length;
   const option = id => {
-    const o = EXERCISES[id], busy = taken.includes(id), hist = history(id, sessionRecId), last = hist[hist.length - 1];
+    const o = EXERCISES[id], busy = taken.includes(id), hist = exHistory(id, sessionRecId), last = hist[hist.length - 1];
     let perf = 'Jamais fait';
     if (last) { const top = Math.max(...last.sets.map(x => x.kg)); perf = `${fmtDate(last.date)} : ${fmtKg(top)} kg × ${last.sets.filter(x => x.kg === top).map(x => x.reps).join(', ')}`; }
     return h('button', { class: 'opt', disabled: busy, onclick: () => { close(); onPick(id); } },
@@ -700,7 +700,7 @@ const loadTag = l => l === 'up' ? h('span', { class: 'tag up' }, '↑ Légère')
 
 // Historique : bilan de la semaine et deux rubriques (comme Réglages) qui ouvrent leur page.
 const doneRecs = () => Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).sort((a, b) => b.date.localeCompare(a.date));
-const exRows = () => Object.values(EXERCISES).map(ex => ({ ex, hist: history(ex.id) })).filter(x => x.hist.length);
+const exRows = () => Object.values(EXERCISES).map(ex => ({ ex, hist: exHistory(ex.id) })).filter(x => x.hist.length);
 const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
 const sessionsIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('rect', { x: 4, y: 5, width: 16, height: 15, rx: 2 }), s('path', { d: 'M4 10h16M9 3v4M15 3v4' }));
 const exercisesIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('path', { d: 'M3 9v6M6 7v10M18 7v10M21 9v6M6 12h12' }));
@@ -781,7 +781,7 @@ function viewExercise(exId) {
   setTab('hist');
   const ex = EXERCISES[exId];
   if (!ex) return go('#/historique');
-  const hist = history(exId);
+  const hist = exHistory(exId);
   const pts = hist.map(x => ({ t: parseYmd(x.date).getTime(), v: bestE1rm(x.sets), label: x.sets.map(s2 => `${fmtKg(s2.kg)}×${s2.reps}`).join(' ') })).filter(p => p.v != null);
   mount(
     // Ouvert depuis une séance ou depuis la liste des exercices : on revient d'où l'on vient.
@@ -914,7 +914,7 @@ function slog(msg) {
 const wait = ms => new Promise(r => setTimeout(r, ms));
 function cfgOk() { return !!(cfg.owner && cfg.repo && cfg.token); }
 function syncChip() {
-  const label = { off: 'Local seulement', idle: 'Synchro en attente', busy: 'Synchro…', ok: `Synchronisé ${sync.at || ''}`, err: 'Erreur de synchro' }[sync.state];
+  const label = { off: 'Local seulement', idle: 'Synchro en attente', busy: sync.phase === 'withings' ? 'Withings…' : 'Synchro…', ok: `Synchronisé ${sync.at || ''}`, err: 'Erreur de synchro' }[sync.state];
   return h('span', { class: 'chip sync ' + (sync.state === 'ok' ? 'ok' : sync.state === 'err' ? 'err' : ''), onclick: () => syncNow(true) }, label);
 }
 function explainError(msg) {
@@ -1030,7 +1030,7 @@ async function pullPrograms() {
     return true;
   } catch (e) { slog(`Programme non lu : ${e.message}`); return false; }
 }
-async function syncNow(manual) {
+async function syncNow(manual, forceWithings) {
   const isManual = manual === true;
   slog(isManual ? 'Appui sur « Synchroniser maintenant »' : 'Synchro automatique');
   if (!cfgOk()) { slog(`Annulé : il manque ${missingFields().join(', ')}`); sync.state = 'off'; if (isManual) go('#/sync'); return; }
@@ -1040,10 +1040,13 @@ async function syncNow(manual) {
   syncing = true; syncStartedAt = Date.now(); sync.state = 'busy'; refreshChips();
   let localChanged = false;
   try {
+    await pullWithings(); // réglage « automatique » à jour avant l'import
+    const wi = await withingsFetch(forceWithings === true, isManual);
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const remote = await ghGet();
         const merged = merge(db, remote.data);
+        if (wi?.days) { const r = applyDays(merged.body, wi.days, Date.now()); Object.assign(merged.body, r.out); wi.count = r.count; }
         const changedRemote = JSON.stringify(merged) !== JSON.stringify({ sessions: remote.data?.sessions || {}, body: remote.data?.body || {} });
         localChanged = JSON.stringify(merged) !== JSON.stringify(db);
         db = merged; store(KEY, db);
@@ -1051,9 +1054,13 @@ async function syncNow(manual) {
         break;
       } catch (e) { if (!e.conflict || attempt) throw e; }
     }
+    if (wi) {
+      const before = activity;
+      try { await withingsSave(wi); } catch (e) { slog(`État Withings non écrit : ${e.message}`); }
+      if (activity !== before) localChanged = true;
+    }
     if (await pullPrograms()) localChanged = true;
-    await pullWithings();
-    await pullActivity();
+    if (!wi?.stepDays) await pullActivity();
     sync.state = 'ok'; const d = new Date(); sync.at = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; sync.msg = '';
     const nS = Object.values(db.sessions).filter(r => !r.deleted).length, nB = Object.values(db.body).filter(b => !b.deleted).length;
     sync.info = `${nS} séance${nS > 1 ? 's' : ''} et ${nB} mesure${nB > 1 ? 's' : ''} sur GitHub.`;
@@ -1066,8 +1073,9 @@ async function syncNow(manual) {
   refreshChips();
   // Des données distantes sont arrivées : on redessine les vues de lecture (pas la séance en cours de saisie).
   // (la page Exercices garde sa recherche en cours : pas de redessin.)
-  const readOnlyView = ['', '#/', '#/historique', '#/historique/seances'].includes(location.hash) || location.hash.startsWith('#/ex/');
+  const readOnlyView = ['', '#/', '#/historique', '#/historique/seances', '#/corps'].includes(location.hash) || location.hash.startsWith('#/ex/');
   if (localChanged && readOnlyView) render();
+  if (location.hash === '#/withings' && wConnected()) render(); // résultat de l'import
 }
 
 // ---------- Réglages, export / import ----------
@@ -1100,20 +1108,208 @@ function syncSummary() {
   return [h('span', { class: 'dot ' + st[0] }), st[1]];
 }
 // ---------- Balance Withings ----------
-// L'import se fait sur le PC (dashboard). L'iPhone lit son état et règle la récupération automatique,
-// partagés dans withings.json du dépôt privé (à côté de data.json).
-const WKEY = 'muscu.withings';
-let wstate = load(WKEY, null);
-const wUrl = () => ghUrl().replace(/[^/]+$/, 'withings.json');
+// L'iPhone importe lui-même pesées et pas à chaque synchro (ouverture de l'appli, retour dessus), au plus toutes les 2 min.
+// Identifiants et jetons Withings : seulement dans cet iPhone (muscu.withings.auth), ni OneDrive ni GitHub.
+// withings.json du dépôt privé : réglage « récupération automatique » partagé avec le dashboard, et état du dernier import.
+const WKEY = 'muscu.withings', WAUTH = 'muscu.withings.auth';
+let wstate = load(WKEY, null), wauth = load(WAUTH, {}), wMsg = '';
+const W_API = load('muscu.wapi', null) || 'https://wbsapi.withings.net'; // surchargé uniquement pour les tests
+const W_AUTH_URL = 'https://account.withings.com/oauth2_user/authorize2';
+// Page relais déclarée chez Withings comme adresse de retour : elle renvoie la réponse vers l'appli.
+const W_RELAY = location.origin + location.pathname.replace(/[^/]*$/, '') + 'withings-callback.html';
+const W_SINCE = '2026-10-26'; // import à partir de cette date (choix de Stéphane)
+const W_YEAR = 365 * 864e5, W_EVERY = 120e3;
+const wConnected = () => !!wauth.refreshToken;
+const hasStepsScope = () => /user\.activity/.test(wauth.scope || '');
 const decodeContent = j => JSON.parse(decodeURIComponent(escape(atob(j.content.replace(/\n/g, '')))));
 async function pullWithings() {
   try {
-    const r = await ghFetch(wUrl(), { headers: ghHeaders(), cache: 'no-store' });
+    const r = await ghFetch(ghUrl().replace(/[^/]+$/, 'withings.json'), { headers: ghHeaders(), cache: 'no-store' });
     if (!r.ok) return; // 404 : Withings jamais connecté
     wstate = decodeContent(await r.json()); store(WKEY, wstate);
   } catch (e) { slog(`État Withings non lu : ${e.message}`); }
 }
-// Pas quotidiens importés par le PC (activity.json, lecture seule ici).
+// Lit un fichier JSON du dépôt privé, le transforme et le réécrit. fn renvoie null : rien à écrire.
+async function updateRepoJson(name, fn, message) {
+  const url = ghUrl().replace(/[^/]+$/, name);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = await ghFetch(url, { headers: ghHeaders(), cache: 'no-store' });
+    if (!r.ok && r.status !== 404) throw new Error(`GitHub ${r.status}`);
+    const j = r.status === 404 ? null : await r.json();
+    const next = fn(j ? decodeContent(j) : {});
+    if (!next) return null;
+    const body = { message: `${message} ${new Date().toISOString()}`, content: btoa(unescape(encodeURIComponent(JSON.stringify(next, null, 1)))) };
+    if (j) body.sha = j.sha;
+    const p = await ghFetch(url, { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) });
+    if (p.status === 409 || p.status === 422) continue;
+    if (!p.ok) throw new Error(`GitHub ${p.status}`);
+    return next;
+  }
+  throw new Error('conflit, réessaie');
+}
+// Le jeton passe dans le corps de la requête : un en-tête Authorization serait bloqué par Safari (CORS de Withings).
+async function wpost(p, params) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const r = await fetch(W_API + p, { method: 'POST', body: new URLSearchParams(params), signal: ctl.signal });
+    const j = await r.json().catch(() => ({}));
+    if (j.status !== 0) throw new Error(`Withings : erreur ${j.status ?? r.status}${j.error ? ` (${j.error})` : ''}`);
+    return j.body;
+  } catch (e) { throw new Error(e.name === 'AbortError' ? 'Withings : délai dépassé (15 s)' : e.message); }
+  finally { clearTimeout(t); }
+}
+function keepTokens(b) {
+  Object.assign(wauth, { accessToken: b.access_token, refreshToken: b.refresh_token, expiresAt: Date.now() + (b.expires_in || 10800) * 1000, refreshedAt: Date.now(), scope: b.scope || wauth.scope });
+  store(WAUTH, wauth);
+}
+async function wToken() {
+  if (wauth.accessToken && wauth.expiresAt > Date.now() + 60e3) return wauth.accessToken;
+  // Withings remplace le jeton de rafraîchissement à chaque usage : le nouveau est enregistré aussitôt.
+  keepTokens(await wpost('/v2/oauth2', { action: 'requesttoken', grant_type: 'refresh_token', client_id: wauth.clientId, client_secret: wauth.clientSecret, refresh_token: wauth.refreshToken }));
+  return wauth.accessToken;
+}
+function withingsConnect(clientId, clientSecret) {
+  const state = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => pad2(b.toString(16))).join('');
+  Object.assign(wauth, { clientId, clientSecret, state }); store(WAUTH, wauth);
+  location.href = `${W_AUTH_URL}?${new URLSearchParams({ response_type: 'code', client_id: clientId, scope: 'user.metrics,user.activity', redirect_uri: W_RELAY, state })}`;
+}
+// Retour de la page d'accord Withings, via la page relais : ?code=…&state=…
+async function finishWithingsAuth(q) {
+  try {
+    if (q.get('error')) throw new Error(`accès refusé (${q.get('error')})`);
+    if (!wauth.state || q.get('state') !== wauth.state) throw new Error('réponse Withings inattendue, recommence la connexion');
+    delete wauth.state;
+    keepTokens(await wpost('/v2/oauth2', { action: 'requesttoken', grant_type: 'authorization_code', client_id: wauth.clientId, client_secret: wauth.clientSecret, code: q.get('code'), redirect_uri: W_RELAY }));
+    wMsg = 'Connectée. Premier import en cours…';
+  } catch (e) { wMsg = `Connexion impossible : ${e.message}`; store(WAUTH, wauth); }
+  if (location.hash === '#/withings') render();
+  syncNow(false, wConnected());
+}
+async function withingsDisconnect() {
+  for (const k of ['accessToken', 'refreshToken', 'expiresAt', 'refreshedAt', 'lastError', 'lastStepsError', 'lastTry']) delete wauth[k];
+  store(WAUTH, wauth);
+  const next = await updateRepoJson('withings.json', d => ({ ...d, connected: false, by: 'iphone', statusAt: Date.now() }), 'withings');
+  if (next) { wstate = next; store(WKEY, wstate); }
+}
+
+const r1 = v => Math.round(v * 10) / 10;
+// Pesées depuis W_SINCE, une par jour : la première du matin, avec la masse grasse de cette même pesée
+// (sinon la première masse grasse du jour).
+async function wFetchDays(token) {
+  const groups = [];
+  let offset = 0;
+  for (let page = 0; page < 50; page++) {
+    const b = await wpost('/measure', {
+      action: 'getmeas', meastypes: '1,6', category: '1', access_token: token,
+      startdate: String(Math.floor(parseYmd(W_SINCE).getTime() / 1000)), enddate: String(Math.floor(Date.now() / 1000)),
+      ...(offset ? { offset: String(offset) } : {}),
+    });
+    groups.push(...(b.measuregrps || []));
+    if (!b.more) break;
+    offset = b.offset;
+  }
+  const days = {};
+  for (const g of groups.sort((a, b) => a.date - b.date)) {
+    const val = t => { const m = (g.measures || []).find(x => x.type === t); return m ? r1(m.value * 10 ** m.unit) : null; };
+    const d = ymd(new Date(g.date * 1000)), w = val(1), f = val(6);
+    if (d < W_SINCE) continue;
+    const cur = days[d] || (days[d] = { at: null, poids: null, mg: null });
+    if (w != null && cur.poids == null) { cur.poids = w; cur.at = g.date * 1000; if (f != null) cur.mg = f; }
+    else if (f != null && cur.mg == null) cur.mg = f;
+    if (cur.at == null) cur.at = g.date * 1000;
+  }
+  return days;
+}
+// Priorité à Withings : une pesée remplace la saisie manuelle du même jour, sauf si la saisie a été corrigée
+// après un import précédent de ce jour-là. Une journée supprimée après import n'est pas recréée.
+function applyDays(body, days, now) {
+  const out = {};
+  let count = 0;
+  for (const [d, w] of Object.entries(days)) {
+    const raw = body[d];
+    if (raw && raw.deleted && raw.withings && raw.withings.at === w.at) continue;
+    const cur = raw && !raw.deleted ? raw : null;
+    const prevW = cur && cur.withings;
+    if (prevW && prevW.at === w.at && prevW.poids === w.poids && prevW.mg === w.mg) continue;
+    const rec = { ...(cur || {}), id: d, date: d, deleted: false };
+    const src = { ...((cur && cur.src) || {}) }, replaced = { ...((prevW && prevW.replaced) || {}) };
+    let changed = false;
+    for (const k of ['poids', 'mg']) {
+      if (w[k] == null) continue;
+      if (prevW && cur[k] != null && cur[k] !== prevW[k]) continue; // corrigé à la main après l'import
+      if (!prevW && cur && cur[k] != null && cur[k] !== w[k]) replaced[k] = cur[k];
+      if (rec[k] !== w[k] || src[k] !== 'withings') changed = true;
+      rec[k] = w[k];
+      src[k] = 'withings';
+    }
+    rec.src = src;
+    rec.withings = { at: w.at, poids: w.poids, mg: w.mg, importedAt: now, ...(Object.keys(replaced).length ? { replaced } : {}) };
+    rec.updatedAt = now;
+    out[d] = rec;
+    if (changed) count++;
+  }
+  return { out, count };
+}
+// Pas quotidiens depuis W_SINCE (le jour en cours est partiel).
+async function wFetchSteps(token) {
+  const days = {};
+  let offset = 0;
+  for (let page = 0; page < 50; page++) {
+    const b = await wpost('/v2/measure', {
+      action: 'getactivity', startdateymd: W_SINCE, enddateymd: today(), data_fields: 'steps', access_token: token,
+      ...(offset ? { offset: String(offset) } : {}),
+    });
+    for (const a of b.activities || []) if (a.date >= W_SINCE && a.steps != null) days[a.date] = { pas: Math.round(a.steps) };
+    if (!b.more) break;
+    offset = b.offset;
+  }
+  return days;
+}
+// Étape Withings de la synchro. force : « Importer maintenant » (ignore le réglage automatique et le délai) ;
+// manual : appui sur la pastille de synchro (ignore seulement le délai). Renvoie null s'il n'y a rien à faire.
+async function withingsFetch(force, manual) {
+  if (!wConnected()) return null;
+  if (!force && wstate?.auto === false) return null;
+  if (!force && !manual && Date.now() - (wauth.lastTry || 0) < W_EVERY) return null;
+  wauth.lastTry = Date.now(); store(WAUTH, wauth);
+  slog('Import Withings…'); sync.phase = 'withings'; refreshChips();
+  try {
+    const token = await wToken();
+    const days = await wFetchDays(token);
+    let steps = null, stepsError = null;
+    // Pas : un échec ne fait pas échouer l'import des pesées.
+    if (hasStepsScope()) { try { steps = await wFetchSteps(token); } catch (e) { stepsError = String(e.message || e); } }
+    return { days, steps, stepsError, count: 0, stepDays: 0 };
+  } catch (e) { const error = String(e.message || e); slog(error); return { error }; }
+  finally { sync.phase = ''; refreshChips(); }
+}
+// Après l'envoi de data.json : pas dans activity.json, puis état du dernier import (pour le dashboard).
+async function withingsSave(wi) {
+  const now = Date.now();
+  if (wi.steps) {
+    const next = await updateRepoJson('activity.json', d => {
+      const old = d.days || {};
+      wi.stepDays = Object.keys(wi.steps).filter(k => old[k]?.pas !== wi.steps[k].pas).length;
+      return wi.stepDays ? { days: { ...old, ...wi.steps }, since: W_SINCE, updatedAt: now } : null;
+    }, 'withings pas');
+    if (next) { activity = next; store(AKEY, activity); }
+  }
+  if (wi.error) wauth.lastError = wi.error;
+  else Object.assign(wauth, { lastImport: now, lastCount: wi.count, lastStepDays: wi.stepDays, lastError: null, lastStepsError: wi.stepsError });
+  store(WAUTH, wauth);
+  wMsg = wi.error ? `Échec : ${wi.error}` : `Import terminé : ${importTxt(wi.count, wi.stepDays)}.`;
+  const patch = wi.error ? { lastError: wi.error }
+    : { connected: true, by: 'iphone', steps: hasStepsScope(), lastImport: now, lastCount: wi.count, lastError: null, lastStepsError: wi.stepsError, since: W_SINCE, validUntil: wauth.refreshedAt + W_YEAR };
+  // Écrit quand quelque chose change, sinon au plus une fois par heure (évite un commit à chaque ouverture).
+  const next = await updateRepoJson('withings.json', d => {
+    const changed = (d.lastError ?? null) !== (patch.lastError ?? null) || (d.lastStepsError ?? null) !== (patch.lastStepsError ?? d.lastStepsError ?? null)
+      || (!wi.error && d.connected !== true) || wi.count > 0 || wi.stepDays > 0 || now - (d.statusAt || 0) > 3600e3;
+    return changed ? { ...d, ...patch, statusAt: now } : null;
+  }, 'withings');
+  if (next) { wstate = next; store(WKEY, wstate); }
+}
+const importTxt = (count, stepDays) => `${count ? `${plural(count, 'pesée')} importée${count > 1 ? 's' : ''}` : 'aucune nouvelle pesée'}${stepDays ? `, pas sur ${plural(stepDays, 'jour')}` : ''}`;
+// Pas quotidiens (activity.json), écrits par l'import Withings ci-dessus.
 const AKEY = 'muscu.activity';
 let activity = load(AKEY, { days: {} });
 async function pullActivity() {
@@ -1152,32 +1348,44 @@ function stepsCard() {
     h('div', { class: 'stepdays' }, week.map(d => h('span', { class: d === today() ? 'today' : '' }, ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'][week.indexOf(d)]))));
 }
 async function setWithingsAuto(auto) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await ghFetch(wUrl(), { headers: ghHeaders(), cache: 'no-store' });
-    if (!r.ok && r.status !== 404) throw new Error(`GitHub ${r.status}`);
-    const j = r.status === 404 ? null : await r.json();
-    const next = { ...(j ? decodeContent(j) : {}), auto, autoAt: Date.now() };
-    const body = { message: `withings réglage ${new Date().toISOString()}`, content: btoa(unescape(encodeURIComponent(JSON.stringify(next, null, 1)))) };
-    if (j) body.sha = j.sha;
-    const p = await ghFetch(wUrl(), { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) });
-    if (p.status === 409 || p.status === 422) continue;
-    if (!p.ok) throw new Error(`GitHub ${p.status}`);
-    wstate = next; store(WKEY, wstate);
-    return;
-  }
-  throw new Error('conflit, réessaie');
+  wstate = await updateRepoJson('withings.json', d => ({ ...d, auto, autoAt: Date.now() }), 'withings réglage');
+  store(WKEY, wstate);
 }
 const scaleIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('rect', { x: 4, y: 4, width: 16, height: 16, rx: 4 }), s('path', { d: 'M8.5 10a5 5 0 0 1 7 0M12 10.5 13.5 8' }));
 const lastWithings = () => Object.values(db.body).filter(b => !b.deleted && b.withings?.at).sort((a, b) => b.withings.at - a.withings.at)[0];
 const whenTxt = ms => `${fmtDate(ymd(new Date(ms)))} ${fmtHour(ms)}`;
 function withingsSummary() {
-  if (!wstate?.connected) return 'Non connectée (à faire sur le PC)';
+  if (!wConnected()) return 'Non connectée';
   if (wstate.auto === false) return 'Désactivée · saisie manuelle';
   const l = lastWithings();
   return `Automatique${l ? ` · dernière pesée ${whenTxt(l.withings.at)}` : ''}`;
 }
 function viewWithings() {
   setTab('set');
+  const head = [h('div', { class: 'row between' }, h('a', { href: '#/reglages' }, '‹ Réglages'), syncChip()), h('h1', {}, 'Balance Withings')];
+  const note = wMsg ? h('p', { class: 'sub', role: 'status' }, wMsg) : null;
+  if (!wConnected()) {
+    const field = (label, inp) => h('label', { class: 'field' }, h('span', {}, label), inp);
+    const id = h('input', { value: wauth.clientId || '', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+    const secret = h('input', { type: 'password', placeholder: wauth.clientSecret ? 'Laisser vide pour garder l\'actuel' : '', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+    const err = h('div', { class: 'sub' });
+    const connect = () => {
+      const cid = id.value.trim(), cs = secret.value.trim() || wauth.clientSecret || '';
+      if (!cid || !cs) { err.textContent = 'Renseigne le Client ID et le Secret.'; return; }
+      wMsg = ''; withingsConnect(cid, cs);
+    };
+    return mount(head,
+      h('div', { class: 'card' },
+        h('b', {}, 'Connecter la balance'),
+        h('div', { class: 'sub' }, 'Identifiants de ton application sur developer.withings.com. Ils restent sur cet iPhone.'),
+        field('Client ID', id), field('Secret', secret),
+        h('button', { class: 'btn', disabled: !cfgOk(), onclick: connect }, 'Se connecter à Withings'),
+        cfgOk() ? h('div', { class: 'sub' }, 'Ouvre la page Withings : choisis le compte de la balance, accepte, l\'appli revient ici.')
+          : h('div', { class: 'sub' }, 'Configure d\'abord la synchronisation GitHub.'),
+        err),
+      note,
+      h('div', { class: 'card sub' }, 'Adresse de retour à déclarer chez Withings : ', h('b', {}, W_RELAY)));
+  }
   const st = wstate || {}, l = lastWithings();
   const msg = h('div', { class: 'sub' });
   const tog = h('input', { type: 'checkbox', class: 'switch', checked: st.auto !== false, disabled: !cfgOk(), 'aria-label': 'Récupération automatique' });
@@ -1185,25 +1393,36 @@ function viewWithings() {
     tog.disabled = true; msg.textContent = 'Enregistrement…';
     try {
       await setWithingsAuto(tog.checked);
-      msg.textContent = tog.checked ? 'Activée : le PC importera tes pesées chaque matin.' : 'Désactivée : plus rien n\'est importé, la saisie reste manuelle.';
+      msg.textContent = tog.checked ? 'Activée : pesées et pas importés à chaque ouverture de l\'appli.' : 'Désactivée : plus rien n\'est importé, la saisie reste manuelle.';
     } catch (e) { tog.checked = !tog.checked; msg.textContent = `Échec : ${e.message}`; }
     tog.disabled = false;
   });
+  const lastStep = Object.keys(activity?.days || {}).sort().pop();
   const kv = (k, v) => [h('span', { class: 'sub' }, k), h('span', {}, v)];
-  mount(
-    h('div', { class: 'row between' }, h('a', { href: '#/reglages' }, '‹ Réglages'), syncChip()),
-    h('h1', {}, 'Balance Withings'),
+  let confirmOff = false;
+  const offBtn = h('button', { class: 'btn danger', onclick: async () => {
+    if (!confirmOff) { confirmOff = true; offBtn.textContent = 'Confirmer la déconnexion'; return; }
+    offBtn.disabled = true;
+    try { await withingsDisconnect(); wMsg = 'Déconnectée : plus rien n\'est importé.'; } catch (e) { wMsg = `Échec : ${e.message}`; }
+    viewWithings();
+  } }, 'Déconnecter');
+  mount(head,
     h('div', { class: 'card' },
-      h('label', { class: 'row between' }, h('span', {}, h('b', {}, 'Récupération automatique'), h('div', { class: 'sub' }, 'Pesées et pas, chaque matin')), tog),
+      h('label', { class: 'row between' }, h('span', {}, h('b', {}, 'Récupération automatique'), h('div', { class: 'sub' }, 'À chaque ouverture de l\'appli')), tog),
       cfgOk() ? msg : h('div', { class: 'sub' }, 'Configure d\'abord la synchronisation GitHub.')),
     h('div', { class: 'card' },
       h('div', { class: 'kvg' },
-        kv('État', st.connected ? 'Connectée (sur le PC)' : 'Non connectée : la connexion se fait dans le dashboard du PC, onglet Corps'),
+        kv('État', 'Connectée sur cet iPhone'),
         l ? kv('Dernière pesée', `${whenTxt(l.withings.at)} · ${fmtKg(l.withings.poids)} kg${l.withings.mg != null ? ` · ${fmtKg(l.withings.mg)} %` : ''}`) : null,
-        st.lastImport ? kv('Dernier import', whenTxt(st.lastImport)) : null,
-        st.since ? kv('Depuis le', fmtDate(st.since)) : null,
-        st.lastError ? kv('Erreur', st.lastError) : null),
-      h('p', { class: 'sub' }, 'L\'import se fait sur le PC : s\'il est éteint, la pesée arrive à son prochain démarrage, puis sur l\'iPhone à la synchro suivante. Désactivée, plus rien n\'est importé et la saisie reste manuelle.')));
+        lastStep ? kv('Pas', `${fmtInt(activity.days[lastStep].pas)} le ${fmtDate(lastStep)}`) : null,
+        wauth.lastImport ? kv('Dernier import', `${whenTxt(wauth.lastImport)} · ${importTxt(wauth.lastCount || 0, wauth.lastStepDays || 0)}`) : null,
+        kv('Depuis le', fmtDate(W_SINCE)),
+        wauth.lastError ? kv('Erreur', wauth.lastError) : null,
+        wauth.lastStepsError ? kv('Erreur pas', wauth.lastStepsError) : null)),
+    note,
+    h('button', { class: 'btn', disabled: !cfgOk(), onclick: () => { wMsg = 'Import en cours…'; viewWithings(); syncNow(true, true); } }, 'Importer maintenant'),
+    offBtn,
+    h('p', { class: 'sub' }, 'Désactivée, plus rien n\'est importé et la saisie reste manuelle. Sans réseau, l\'import se fera à la prochaine ouverture.'));
 }
 
 function viewSettings() {
@@ -1397,6 +1616,11 @@ function render() {
 window.addEventListener('hashchange', () => { ui.active = undefined; render(); });
 window.addEventListener('online', () => syncNow());
 db.sessions = migrateSessions(db.sessions); store(KEY, db); // renomme les anciennes fiches (Haut/Bas => Upper/Lower)
+// Retour de la connexion Withings (page relais) : ?code=…&state=… On nettoie l'adresse avant d'afficher.
+const wReturn = new URLSearchParams(location.search);
+const isWReturn = wReturn.has('code') || wReturn.has('error');
+if (isWReturn) history.replaceState(null, '', location.pathname + '#/withings');
 render();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
-syncNow();
+if (isWReturn) finishWithingsAuth(wReturn); // lance lui-même la synchro avec le premier import
+else syncNow();

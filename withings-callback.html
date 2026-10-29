@@ -7,12 +7,12 @@
 <title>Retour Withings</title>
 </head>
 <body style="font-family:-apple-system,Segoe UI,Arial,sans-serif;padding:24px">
-<!-- Relais de connexion Withings : Withings exige une adresse de retour publique en https ; cette page renvoie
-     aussitôt la réponse (code temporaire, inutilisable sans le secret gardé sur le PC) au dashboard local. -->
-<p>Retour vers le dashboard Muscu…</p>
-<p><a id="go" href="http://localhost:8766/withings/callback">Continuer</a> si rien ne se passe (le dashboard doit tourner sur ce PC).</p>
+<!-- Relais de connexion Withings : adresse de retour déclarée chez Withings. Elle renvoie aussitôt la réponse
+     (code temporaire, inutilisable sans le secret gardé dans l'iPhone) vers l'appli, qui termine la connexion. -->
+<p>Retour vers l'appli Muscu…</p>
+<p><a id="go" href="./">Continuer</a> si rien ne se passe.</p>
 <script>
-  var to = 'http://localhost:8766/withings/callback' + location.search;
+  var to = './' + location.search;
   document.getElementById('go').href = to;
   location.replace(to);
 </script>
