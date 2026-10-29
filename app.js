@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '27 (historique en rubriques)';
+const APP_VERSION = '28 (saisie en volet)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -802,26 +802,41 @@ const MEASURES = [
   { key: 'thigh', label: 'Tour de cuisse', short: 'Cuisse', better: 'up', hint: 'à mi-cuisse, debout, jambe détendue' },
 ];
 
-function viewBody() {
-  setTab('corps');
-  const list = Object.values(db.body).filter(b => !b.deleted).sort((a, b) => a.date.localeCompare(b.date));
-  const fDate = h('input', { type: 'date', value: today() });
-  const fP = h('input', { type: 'text', inputmode: 'decimal', placeholder: 'kg' });
-  const fM = h('input', { type: 'text', inputmode: 'decimal', placeholder: '%' });
-  const fMeas = Object.fromEntries(MEASURES.map(m => [m.key, h('input', { type: 'text', inputmode: 'decimal', placeholder: 'cm' })]));
+// Saisie dans un volet par-dessus Corps : mensurations, ou poids et masse grasse (correction de Withings).
+// Un champ vide montre en gris la dernière valeur connue, pour comparer.
+function openEntrySheet(mode = 'mesures') {
+  if (document.querySelector('.sheet-wrap')) return;
   const existing = d => db.body[d] && !db.body[d].deleted ? db.body[d] : null;
-  // ⚖ à côté du champ quand la valeur affichée vient de la balance Withings.
-  const wP = h('span', { class: 'wb', hidden: true }, '⚖'), wM = h('span', { class: 'wb', hidden: true }, '⚖');
+  const label = { poids: 'Poids (kg)', mg: 'Masse grasse (%)', ...Object.fromEntries(MEASURES.map(m => [m.key, `${m.label} (cm)`])) };
+  const unit = k => k === 'poids' ? 'kg' : k === 'mg' ? '%' : 'cm';
+  const lastOther = (k, d) => Object.values(db.body).filter(b => !b.deleted && b[k] != null && b.date !== d).sort((a, b) => b.date.localeCompare(a.date))[0];
+  const close = () => wrap.remove();
+  const fDate = h('input', { type: 'date', value: today() });
+  const seg = h('div', { class: 'seg' });
+  const body = h('div');
+  let inputs = {};
   const fill = () => {
-    const e = existing(fDate.value);
-    fP.value = e?.poids != null ? fmtKg(e.poids) : ''; fM.value = e?.mg != null ? fmtKg(e.mg) : '';
-    for (const m of MEASURES) fMeas[m.key].value = e?.[m.key] != null ? fmtKg(e[m.key]) : '';
-    wP.hidden = e?.src?.poids !== 'withings'; wM.hidden = e?.src?.mg !== 'withings';
+    seg.replaceChildren(...[['mesures', 'Mensurations'], ['poids', 'Poids / MG']].map(([m, t]) =>
+      h('button', { type: 'button', class: m === mode ? 'on' : '', onclick: () => { mode = m; fill(); } }, t)));
+    const e = existing(fDate.value), refDates = new Set();
+    inputs = {};
+    const fields = (mode === 'mesures' ? MEASURES.map(m => m.key) : ['poids', 'mg']).map(k => {
+      const ref = lastOther(k, fDate.value);
+      if (ref && e?.[k] == null) refDates.add(ref.date);
+      inputs[k] = h('input', { type: 'text', inputmode: 'decimal', value: e?.[k] != null ? fmtKg(e[k]) : '', placeholder: ref ? fmtKg(ref[k]) : unit(k) });
+      return h('label', { class: 'field' }, h('span', {}, label[k], e?.src?.[k] === 'withings' ? h('span', { class: 'wb' }, '⚖') : null), inputs[k]);
+    });
+    body.replaceChildren(...[h('div', { class: 'grid2' }, fields),
+      refDates.size ? h('p', { class: 'sub' }, `En gris : dernière valeur (${[...refDates].sort().map(fmtDate).join(', ')}), pour comparer.`) : null,
+      mode === 'poids' ? h('p', { class: 'sub' }, '⚖ = valeur importée de Withings. Une correction faite ici est conservée : l\'import ne l\'écrasera plus pour ce jour-là.') : null,
+      mode === 'mesures' ? h('details', {}, h('summary', { class: 'sub' }, 'Comment mesurer'),
+        h('p', { class: 'sub' }, 'Mètre ruban à plat, non serré, le matin, toujours au même endroit et du même côté du corps.'),
+        h('ul', { class: 'sub' }, MEASURES.map(m => h('li', {}, `${m.label} : ${m.hint}.`)))) : null].filter(Boolean));
   };
   fDate.addEventListener('change', fill);
   fill();
-  const add = h('button', { class: 'btn', onclick: () => {
-    const vals = { poids: num(fP.value), mg: num(fM.value), ...Object.fromEntries(MEASURES.map(m => [m.key, num(fMeas[m.key].value)])) };
+  const ok = h('button', { class: 'btn', style: 'margin-top:10px', onclick: () => {
+    const vals = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, num(i.value)]));
     if (!fDate.value || Object.values(vals).every(v => v == null)) return;
     const prev = existing(fDate.value) || {};
     const rec = { ...prev, id: fDate.value, date: fDate.value, updatedAt: Date.now() };
@@ -829,9 +844,22 @@ function viewBody() {
     // Une valeur changée à la main n'est plus « Withings » ; l'import ne l'écrasera plus pour ce jour-là.
     for (const k of ['poids', 'mg']) if (vals[k] != null && vals[k] !== prev[k]) rec.src = { ...rec.src, [k]: 'manuel' };
     db.body[fDate.value] = rec;
-    save(); viewBody();
+    save(); close(); viewBody();
   } }, 'Enregistrer');
+  const wrap = h('div', { class: 'sheet-wrap' },
+    h('div', { class: 'dim', onclick: close }),
+    h('div', { class: 'sheet entry', role: 'dialog', 'aria-label': 'Saisir une mesure' },
+      h('span', { class: 'grab', 'aria-hidden': 'true' }),
+      seg,
+      h('label', { class: 'field' }, h('span', {}, 'Date'), fDate),
+      body, ok,
+      h('button', { class: 'btn secondary', style: 'margin-top:8px', onclick: close }, 'Annuler')));
+  document.body.append(wrap);
+}
 
+function viewBody() {
+  setTab('corps');
+  const list = Object.values(db.body).filter(b => !b.deleted).sort((a, b) => a.date.localeCompare(b.date));
   const pts = key => list.filter(b => b[key] != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b[key] }));
   const wPts = pts('poids');
   const avg = wPts.map(p => {
@@ -851,7 +879,8 @@ function viewBody() {
   }).filter(Boolean);
 
   mount(
-    h('div', { class: 'row between' }, h('h1', {}, 'Corps'), syncChip()),
+    h('div', { class: 'row between' }, h('h1', {}, 'Corps'),
+      h('div', { class: 'row' }, h('button', { class: 'btn small tight', onclick: () => openEntrySheet() }, '+ Saisir'), syncChip())),
     stepsCard(),
     last ? h('div', { class: 'card' },
       h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Dernière pesée, ${fmtDate(last.date)}${last.src?.poids === 'withings' && last.withings?.at ? ' ' + fmtHour(last.withings.at) : ''}`),
@@ -859,17 +888,6 @@ function viewBody() {
       h('div', { class: 'row', style: 'align-items:baseline;gap:18px' }, h('div', { class: 'big' }, `${fmtKg(last.poids)} kg`),
         last.mg != null ? h('div', { class: 'mid' }, `${fmtKg(last.mg)} %`) : null),
       prevW ? h('div', { class: 'sub delta ' + (last.poids <= prevW.poids ? 'up' : 'down') }, `${last.poids - prevW.poids > 0 ? '+' : ''}${fmtKg(Math.round((last.poids - prevW.poids) * 10) / 10)} kg depuis ${fmtDate(prevW.date)}`) : null) : null,
-    h('div', { class: 'card' },
-      h('label', { class: 'field' }, h('span', {}, 'Date'), fDate),
-      h('div', { class: 'grid2' },
-        h('label', { class: 'field' }, h('span', {}, 'Poids (kg) ', wP), fP),
-        h('label', { class: 'field' }, h('span', {}, 'Masse grasse (%) ', wM), fM)),
-      h('div', { class: 'grid2' }, MEASURES.map(m => h('label', { class: 'field' }, h('span', {}, `${m.label} (cm)`), fMeas[m.key]))),
-      add,
-      wstate?.connected ? h('p', { class: 'sub' }, '⚖ = valeur importée de Withings. Tu peux la corriger ou saisir à la main ; les mensurations restent manuelles.') : null,
-      h('details', { style: 'margin-top:10px' }, h('summary', { class: 'sub' }, 'Comment mesurer'),
-        h('p', { class: 'sub' }, 'Mètre ruban à plat, non serré, le matin, toujours au même endroit et du même côté du corps.'),
-        h('ul', { class: 'sub' }, MEASURES.map(m => h('li', {}, `${m.label} : ${m.hint}.`))))),
     summaryRows.length ? [h('h2', {}, 'Évolution des mensurations'),
       h('div', { class: 'card' }, h('table', {}, h('tr', {}, h('th', {}, 'Mesure'), h('th', {}, 'Dernière'), h('th', {}, 'Depuis la 1re')), summaryRows))] : null,
     h('h2', {}, 'Poids'),
