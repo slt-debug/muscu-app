@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '41 (balayage entre pages)';
+const APP_VERSION = '42 (saisie dépliable dans Corps)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -894,22 +894,22 @@ const MEASURES = [
   { key: 'thigh', label: 'Tour de cuisse', short: 'Cuisse', better: 'up', hint: 'à mi-cuisse, debout, jambe détendue' },
 ];
 
-// Saisie dans un volet par-dessus Corps : mensurations, ou poids et masse grasse (correction de Withings).
+// Ouvre la saisie dépliée de Corps (depuis le bandeau du rappel, y compris sur la page Séance).
+function openEntry(mode = 'mesures') { ui.bodyEntry = mode; go('#/corps'); }
+// Saisie dépliée sous la carte « Dernière pesée » : mensurations, ou poids et masse grasse (correction de Withings).
 // Un champ vide montre en gris la dernière valeur connue, pour comparer.
-function openEntrySheet(mode = 'mesures') {
-  if (document.querySelector('.sheet-wrap')) return;
+function entryForm(mode) {
   const existing = d => db.body[d] && !db.body[d].deleted ? db.body[d] : null;
   const label = { poids: 'Poids (kg)', mg: 'Masse grasse (%)', ...Object.fromEntries(MEASURES.map(m => [m.key, `${m.label} (cm)`])) };
   const unit = k => k === 'poids' ? 'kg' : k === 'mg' ? '%' : 'cm';
   const lastOther = (k, d) => Object.values(db.body).filter(b => !b.deleted && b[k] != null && b.date !== d).sort((a, b) => b.date.localeCompare(a.date))[0];
-  const close = () => wrap.remove();
   const fDate = h('input', { type: 'date', value: today() });
   const seg = h('div', { class: 'pills' });
   const body = h('div');
   let inputs = {};
   const fill = () => {
     seg.replaceChildren(...[['mesures', 'Mensurations'], ['poids', 'Poids / MG']].map(([m, t]) =>
-      h('button', { type: 'button', class: m === mode ? 'on' : '', onclick: () => { mode = m; fill(); } }, t)));
+      h('button', { type: 'button', class: m === mode ? 'on' : '', onclick: () => { mode = ui.bodyEntry = m; fill(); } }, t)));
     const e = existing(fDate.value), refDates = new Set();
     inputs = {};
     const fields = (mode === 'mesures' ? MEASURES.map(m => m.key) : ['poids', 'mg']).map(k => {
@@ -936,17 +936,10 @@ function openEntrySheet(mode = 'mesures') {
     // Une valeur changée à la main n'est plus « Withings » ; l'import ne l'écrasera plus pour ce jour-là.
     for (const k of ['poids', 'mg']) if (vals[k] != null && vals[k] !== prev[k]) rec.src = { ...rec.src, [k]: 'manuel' };
     db.body[fDate.value] = rec;
-    save(); close(); render();
+    ui.bodyEntry = null; save(); render();
   } }, 'Enregistrer');
-  const wrap = h('div', { class: 'sheet-wrap' },
-    h('div', { class: 'dim', onclick: close }),
-    h('div', { class: 'sheet entry', role: 'dialog', 'aria-label': 'Saisir une mesure' },
-      h('span', { class: 'grab', 'aria-hidden': 'true' }),
-      seg,
-      h('label', { class: 'field' }, h('span', {}, 'Date'), fDate),
-      body, ok,
-      h('button', { class: 'btn secondary', style: 'margin-top:8px', onclick: close }, 'Annuler')));
-  document.body.append(wrap);
+  return h('div', { class: 'card entry', role: 'group', 'aria-label': 'Saisir une mesure' },
+    seg, h('label', { class: 'field' }, h('span', {}, 'Date'), fDate), body, ok);
 }
 
 function viewBody() {
@@ -971,15 +964,19 @@ function viewBody() {
   }).filter(Boolean);
 
   mount(
-    h('div', { class: 'row between' }, h('h1', {}, 'Corps'),
-      h('div', { class: 'row' }, h('button', { class: 'btn small tight', onclick: () => openEntrySheet() }, '+ Saisir'), syncChip())),
+    h('div', { class: 'row between' }, h('h1', {}, 'Corps'), syncChip()),
     remindBanner(),
-    last ? h('div', { class: 'card' },
-      h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Dernière pesée, ${fmtDate(last.date)}${last.src?.poids === 'withings' && last.withings?.at ? ' ' + fmtHour(last.withings.at) : ''}`),
+    // Carte de la dernière pesée ; sa ligne « Saisir » déplie le formulaire de saisie juste dessous.
+    h('div', { class: 'card fold' },
+      last ? [h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Dernière pesée, ${fmtDate(last.date)}${last.src?.poids === 'withings' && last.withings?.at ? ' ' + fmtHour(last.withings.at) : ''}`),
         last.src?.poids === 'withings' ? h('span', { class: 'wb' }, '⚖ Withings') : null),
       h('div', { class: 'row', style: 'align-items:baseline;gap:18px' }, h('div', { class: 'big' }, `${fmtKg(last.poids)} kg`),
         last.mg != null ? h('div', { class: 'mid' }, `${fmtKg(last.mg)} %`) : null),
-      prevW ? h('div', { class: 'sub delta ' + (last.poids <= prevW.poids ? 'up' : 'down') }, `${last.poids - prevW.poids > 0 ? '+' : ''}${fmtKg(Math.round((last.poids - prevW.poids) * 10) / 10)} kg depuis ${fmtDate(prevW.date)}`) : null) : null,
+      prevW ? h('div', { class: 'sub delta ' + (last.poids <= prevW.poids ? 'up' : 'down') }, `${last.poids - prevW.poids > 0 ? '+' : ''}${fmtKg(Math.round((last.poids - prevW.poids) * 10) / 10)} kg depuis ${fmtDate(prevW.date)}`) : null]
+        : h('div', { class: 'sub' }, 'Aucune pesée pour l\'instant.'),
+      h('button', { class: 'more', 'aria-expanded': String(!!ui.bodyEntry), onclick: () => { ui.bodyEntry = ui.bodyEntry ? null : 'mesures'; viewBody(); } },
+        h('span', {}, 'Saisir'), h('span', { 'aria-hidden': 'true' }, ui.bodyEntry ? '⌃' : '›'))),
+    ui.bodyEntry ? entryForm(ui.bodyEntry) : null,
     summaryRows.length ? [h('h2', {}, 'Évolution des mensurations'),
       h('div', { class: 'card' }, h('table', {}, h('tr', {}, h('th', {}, 'Mesure'), h('th', {}, 'Dernière'), h('th', {}, 'Depuis la 1re')), summaryRows))] : null,
     h('h2', {}, 'Poids'),
@@ -1166,7 +1163,8 @@ async function syncNow(manual, forceWithings) {
   refreshChips();
   // Des données distantes sont arrivées : on redessine les vues de lecture (pas la séance en cours de saisie).
   // (la page Exercices garde sa recherche en cours : pas de redessin.)
-  const readOnlyView = ['', '#/', '#/historique', '#/historique/seances', '#/corps'].includes(location.hash) || location.hash.startsWith('#/ex/');
+  // (Corps n'est pas redessiné pendant une saisie dépliée : les champs en cours seraient perdus.)
+  const readOnlyView = ['', '#/', '#/historique', '#/historique/seances'].includes(location.hash) || (location.hash === '#/corps' && !ui.bodyEntry) || location.hash.startsWith('#/ex/');
   if (localChanged && readOnlyView) render();
   if (location.hash === '#/withings' && wConnected()) render(); // résultat de l'import
 }
@@ -1553,7 +1551,7 @@ function remindBanner(long) {
     h('b', {}, '⌀ Mensurations à mettre à jour'),
     h('div', { class: 'sub' }, s.last ? `Dernière mesure il y a ${plural(s.daysSince, 'jour')}${long ? ` (${fmtDate(s.last)}). Le matin à jeun, avant la séance.` : '.'}` : 'Aucune mensuration enregistrée pour l\'instant.'),
     h('div', { class: 'acts' },
-      h('button', { class: 'btn small', onclick: () => openEntrySheet('mesures') }, 'Saisir'),
+      h('button', { class: 'btn small', onclick: () => openEntry('mesures') }, 'Saisir'),
       h('button', { class: 'btn small secondary', onclick: () => { store(RSNOOZE, today()); render(); } }, 'Demain')));
 }
 const remindSummary = () => { const r = remCfg(); return r.on ? `Toutes les ${r.weeks > 1 ? `${r.weeks} semaines` : 'semaines'}, le ${REMINDER_DAYS[r.day]}` : 'Désactivé'; };
@@ -1793,7 +1791,9 @@ function render() {
 }
 let slideFrom = 0; // sens du glissement de la page qui arrive après un balayage (1 = depuis la droite, -1 = depuis la gauche)
 window.addEventListener('hashchange', () => {
-  ui.active = undefined; render();
+  ui.active = undefined;
+  if (location.hash !== '#/corps') ui.bodyEntry = null; // la saisie dépliée se referme en quittant Corps
+  render();
   if (slideFrom) { app.animate?.([{ transform: `translateX(${slideFrom * 28}%)`, opacity: 0.4 }, { transform: 'none', opacity: 1 }], { duration: 200, easing: 'ease-out' }); slideFrom = 0; }
 });
 
