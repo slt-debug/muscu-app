@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '44 (pas en haut des Objectifs)';
+const APP_VERSION = '45 (pas par semaine, ouverture sur Objectifs)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1422,6 +1422,31 @@ async function pullActivity() {
 const stepGoal = () => goals?.pas || 10000; // objectif de pas réglé dans la page Objectifs
 const fmtInt = n => Math.round(n).toLocaleString('fr-FR');
 const fmtK = n => `${(Math.round(n / 100) / 10).toLocaleString('fr-FR')}k`;
+// Numéro de semaine ISO 8601 d'une date 'AAAA-MM-JJ' (la semaine 1 contient le premier jeudi de l'année).
+function isoWeek(d) {
+  const x = parseYmd(d); x.setDate(x.getDate() + 3 - (x.getDay() + 6) % 7);
+  const jan4 = new Date(x.getFullYear(), 0, 4);
+  return 1 + Math.round(((x - jan4) / 864e5 - 3 + (jan4.getDay() + 6) % 7) / 7);
+}
+// Tuile des pas de la page Objectifs : une barre par semaine (lundi → dimanche, 8 dernières semaines),
+// hauteur = moyenne de pas par jour sur les jours terminés ; la semaine en cours est hachurée.
+function weeklyStepsCard() {
+  const all = activity?.days || {}, goal = stepGoal();
+  if (!Object.keys(all).length) return null;
+  const weeks = Array.from({ length: 8 }, (_, i) => addDays(weekStart(), -7 * (7 - i)));
+  const avgOf = ws => { const v = Array.from({ length: 7 }, (_, i) => addDays(ws, i)).filter(d => d < today() && all[d]).map(d => all[d].pas); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const avgs = weeks.map(avgOf), cur = avgs[7];
+  const M = Math.max(goal * 1.25, ...avgs.map(v => v || 0)), H = 78;
+  return h('div', { class: 'card' },
+    h('div', { class: 'row between' }, h('span', { class: 'sub' }, 'Pas · moyenne par jour semaine en cours'), h('span', { class: 'wb' }, '⚖ Withings')),
+    h('div', { class: 'row', style: 'align-items:baseline;gap:12px' }, h('div', { class: 'big' }, cur != null ? fmtInt(cur) : '–'),
+      cur == null ? h('span', { class: 'sub' }, 'pas encore de jour terminé')
+        : h('span', { class: cur >= goal ? 'steps-ok' : 'sub' }, cur >= goal ? '✓ au-dessus de l\'objectif' : `${fmtInt(goal - cur)} sous l'objectif`)),
+    h('div', { class: 'stepbars', 'aria-hidden': 'true' }, weeks.map((ws, i) => avgs[i] == null ? h('div', { class: 'col empty' }, h('span'))
+      : h('div', { class: 'col' + (avgs[i] >= goal ? ' ok' : '') + (i === 7 ? ' now' : '') }, h('b', {}, fmtK(avgs[i])), h('span', { style: `height:${Math.max(3, avgs[i] / M * H)}%` }))),
+      h('i', { style: `bottom:${goal / M * H}%` })),
+    h('div', { class: 'stepdays' }, weeks.map((ws, i) => h('span', { class: i === 7 ? 'today' : '' }, `S${isoWeek(ws)}`))));
+}
 // Carte des pas de la page Séance : le jour en cours (partiel, mis à jour à chaque import Withings), puis la semaine
 // du lundi au dimanche avec le nombre de pas en milliers sur chaque barre (jour en cours hachuré, jours à venir vides).
 function stepsCard() {
@@ -1670,7 +1695,7 @@ function viewGoals() {
   const pts = key => list.filter(b => b[key] != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b[key] }));
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Objectifs'), syncChip()),
-    stepsCard(), // même tuile que la page Séance
+    weeklyStepsCard(),
     h('div', { class: 'pills p3' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))),
     goalCard('Poids', 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
     goalCard('Masse grasse', '%', pts('mg'), goals?.mg ?? null, 'var(--series-2)', fmtKg),
@@ -1920,6 +1945,7 @@ db.sessions = migrateSessions(db.sessions); store(KEY, db); // renomme les ancie
 const wReturn = new URLSearchParams(location.search);
 const isWReturn = wReturn.has('code') || wReturn.has('error');
 if (isWReturn) history.replaceState(null, '', location.pathname + '#/withings');
+else if (!location.hash) history.replaceState(null, '', location.pathname + '#/objectifs'); // page d'ouverture de l'appli
 render();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 if (isWReturn) finishWithingsAuth(wReturn); // lance lui-même la synchro avec le premier import
