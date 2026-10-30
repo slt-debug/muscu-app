@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '40 (titre Séance)';
+const APP_VERSION = '41 (balayage entre pages)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1791,7 +1791,48 @@ function render() {
     default: return viewHome();
   }
 }
-window.addEventListener('hashchange', () => { ui.active = undefined; render(); });
+let slideFrom = 0; // sens du glissement de la page qui arrive après un balayage (1 = depuis la droite, -1 = depuis la gauche)
+window.addEventListener('hashchange', () => {
+  ui.active = undefined; render();
+  if (slideFrom) { app.animate?.([{ transform: `translateX(${slideFrom * 28}%)`, opacity: 0.4 }, { transform: 'none', opacity: 1 }], { duration: 200, easing: 'ease-out' }); slideFrom = 0; }
+});
+
+// ---------- Balayage entre les pages ----------
+// Sur les 4 pages principales : gauche = page suivante de la barre du bas, droite = précédente.
+// Sur une sous-page : droite = retour à la page parente. Rien pendant une séance, sur un champ, un curseur,
+// un élément qui défile de côté, ni avec un volet ouvert.
+const MAIN_PAGES = ['#/', '#/historique', '#/corps', '#/reglages'];
+function parentPage(hash) {
+  if (hash.startsWith('#/historique/')) return '#/historique';
+  if (hash.startsWith('#/ex/')) return exFrom.startsWith('#/seance/') ? exFrom : '#/historique/exercices';
+  if (['#/repos', '#/sync', '#/sauvegarde', '#/withings', '#/rappel'].includes(hash)) return '#/reglages';
+  return null;
+}
+function swipeTarget(dir) { // dir = 1 : balayage vers la gauche (suivante), -1 : vers la droite
+  const hash = location.hash === '' ? '#/' : location.hash;
+  if (hash.startsWith('#/seance/')) return null;
+  const i = MAIN_PAGES.indexOf(hash);
+  if (i >= 0) return MAIN_PAGES[i + dir] || null;
+  return dir < 0 ? parentPage(hash) : null;
+}
+const scrollsSideways = el => { for (; el && el.nodeType === 1; el = el.parentElement) if (el.scrollWidth > el.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(el).overflowX)) return true; return false; };
+let swipe = null;
+document.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  swipe = e.touches.length !== 1 || document.querySelector('.sheet-wrap') || e.target.closest('input, textarea, select, #tabs, #timer') || scrollsSideways(e.target)
+    ? null : { x: t.clientX, y: t.clientY, at: Date.now() };
+}, { passive: true });
+document.addEventListener('touchend', e => {
+  if (!swipe) return;
+  const t = e.changedTouches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+  const quick = Date.now() - swipe.at < 800;
+  swipe = null;
+  if (!quick || Math.abs(dx) < 60 || Math.abs(dx) < 2 * Math.abs(dy)) return;
+  const dir = dx < 0 ? 1 : -1, to = swipeTarget(dir);
+  if (!to) return;
+  slideFrom = dir;
+  go(to);
+}, { passive: true });
 window.addEventListener('online', () => syncNow());
 db.sessions = migrateSessions(db.sessions); store(KEY, db); // renomme les anciennes fiches (Haut/Bas => Upper/Lower)
 // Retour de la connexion Withings (page relais) : ?code=…&state=… On nettoie l'adresse avant d'afficher.
