@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '43 (page Objectifs)';
+const APP_VERSION = '44 (pas en haut des Objectifs)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1645,30 +1645,6 @@ function goalCard(title, unit, pts, target, color, fmt) {
       h('div', { class: 'sub' }, `${part} % du chemin depuis ${fmt(start)} ${unit} · encore ${fmt(r1(Math.abs(cur - target)))} ${unit === '%' ? 'pt' : unit}`)] : null,
     shown.length ? lineChart([{ name: 'Moyenne 7 jours', points: avgPts }, { name: 'Mesure', points: shown, raw: true, line: false }], unit, { target, color }) : h('p', { class: 'sub' }, 'Aucune mesure sur cette période.'));
 }
-function stepsGoalCard() {
-  const all = activity?.days || {}, goal = stepGoal();
-  const keys = Object.keys(all).sort();
-  if (!keys.length) return h('div', { class: 'card goal' }, h('b', {}, 'Pas'), h('p', { class: 'sub' }, 'Pas encore de données Withings.'));
-  const per = PERIODS.find(p => p[0] === (ui.objPeriod || '3m'))[2];
-  const from = per ? addDays(today(), -(per - 1)) : keys[0];
-  const days = []; for (let d = from < keys[0] ? keys[0] : from; d <= today(); d = addDays(d, 1)) days.push(d);
-  const done = days.filter(d => d < today() && all[d]);
-  const last7 = done.slice(-7).map(d => all[d].pas);
-  const hit = done.filter(d => all[d].pas >= goal).length;
-  const W = 340, H = 120, m = { l: 6, r: 6, t: 10, b: 18 }, n = days.length, bw = (W - m.l - m.r) / n;
-  const M = Math.max(goal * 1.25, ...days.map(d => all[d]?.pas || 0));
-  const Y = v => H - m.b - v / M * (H - m.t - m.b);
-  const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Pas par jour' },
-    days.map((d, i) => { const v = all[d]?.pas; return v == null ? null : s('rect', { class: 'bar' + (v >= goal ? ' ok' : '') + (d === today() ? ' now' : ''), x: m.l + i * bw + bw * 0.12, y: Y(v), width: Math.max(1, bw * 0.76), height: H - m.b - Y(v), rx: Math.min(2, bw / 4) }); }),
-    s('line', { class: 'target', x1: m.l, x2: W - m.r, y1: Y(goal), y2: Y(goal) }),
-    s('text', { x: m.l, y: H - 4 }, fmtDate(days[0])), s('text', { x: W - m.r, y: H - 4, 'text-anchor': 'end' }, fmtDate(days[n - 1])));
-  return h('div', { class: 'card goal' },
-    h('div', { class: 'row between' }, h('b', {}, 'Pas'), h('span', { class: 'sub' }, `objectif ${fmtInt(goal)} / jour`)),
-    h('div', { class: 'row', style: 'align-items:baseline;gap:10px;flex-wrap:wrap' }, h('div', { class: 'big' }, last7.length ? fmtInt(last7.reduce((a, b) => a + b, 0) / last7.length) : '–'),
-      h('span', { class: 'sub' }, `moyenne 7 jours · ${hit} jour${hit > 1 ? 's' : ''} sur ${done.length} à l'objectif`)),
-    h('div', { class: 'chart steps-chart' }, svg),
-    h('div', { class: 'sub' }, 'Vert = objectif atteint ; le jour en cours est partiel.'));
-}
 function goalsForm() {
   const g = goals || {};
   const firstBody = Object.values(db.body).filter(b => !b.deleted).map(b => b.date).sort()[0];
@@ -1694,10 +1670,10 @@ function viewGoals() {
   const pts = key => list.filter(b => b[key] != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b[key] }));
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Objectifs'), syncChip()),
+    stepsCard(), // même tuile que la page Séance
     h('div', { class: 'pills p3' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))),
     goalCard('Poids', 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
     goalCard('Masse grasse', '%', pts('mg'), goals?.mg ?? null, 'var(--series-2)', fmtKg),
-    stepsGoalCard(),
     h('div', { class: 'card fold' }, h('button', { class: 'more', style: 'margin-top:0;padding-top:0;border-top:0', 'aria-expanded': String(!!ui.goalEdit), onclick: () => { ui.goalEdit = !ui.goalEdit; viewGoals(); } },
       h('span', {}, 'Modifier les objectifs'), h('span', { 'aria-hidden': 'true' }, ui.goalEdit ? '⌃' : '›'))),
     ui.goalEdit ? goalsForm() : null);
