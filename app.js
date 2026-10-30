@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '46 (adhérence par semaine)';
+const APP_VERSION = '47 (records à battre)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -573,16 +573,17 @@ function viewSession(name, date) {
   }
 
   const redraw = () => { const y = window.scrollY; viewSession(name, date); window.scrollTo(0, y); };
+  const prs = Object.fromEntries(list.map(ex => [ex.id, prTarget(ex, sugs[ex.id], id, rec?.entries?.[ex.id])]));
 
   const cards = list.map(ex => {
     const entry = entryFor(ex, rec, sugs[ex.id]);
     const nDone = doneSets(entry).length;
     const open = ui.active === ex.id;
     const head = h('button', { class: 'ex-head', onclick: () => { ui.active = open ? null : ex.id; redraw(); } },
-      h('div', { class: 'grow' }, h('h3', {}, ex.name), h('div', { class: 'sub' }, `${ex.sets} × ${ex.lo === ex.hi ? ex.lo : ex.lo + '-' + ex.hi}${ex.note ? ' · ' + ex.note : ''}`),
+      h('div', { class: 'grow' }, h('h3', {}, ex.name, prs[ex.id] ? h('span', { class: 'pr-tag' }, 'PR') : null), h('div', { class: 'sub' }, `${ex.sets} × ${ex.lo === ex.hi ? ex.lo : ex.lo + '-' + ex.hi}${ex.note ? ' · ' + ex.note : ''}`),
         ex.swapOf ? h('span', { class: 'swaptag' }, `⇄ à la place de ${ex.swapOf.name}`) : ex.stoppedFor ? h('span', { class: 'swaptag' }, `⇄ arrêté, suite avec ${ex.stoppedFor}`) : null),
       h('span', { class: 'count' }, `${nDone}/${entry.sets.length}`));
-    const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : '') },
+    const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : ''), 'data-ex': ex.id },
       h('div', { class: 'ex-top' }, head, h('button', { class: 'qbtn', 'aria-label': `Fiche de l'exercice ${ex.name}`, onclick: () => openFiche(ex, id) }, '?')));
     if (!open) return card;
     card.append(h('div', { class: 'hint' }, sugs[ex.id].text));
@@ -691,7 +692,38 @@ function viewSession(name, date) {
       h('b', {}, 'Séance terminée'),
       h('div', { class: 'sub' }, `${fmtMin(sessionDuration(rec))} · ${done} série${done > 1 ? 's' : ''} · ${fmtHour(c.start)} → ${fmtHour(c.end)}`),
       h('div', { style: 'height:10px' }),
-      h('a', { class: 'btn secondary', href: '#/' }, 'Retour à l\'accueil')) : null);
+      h('a', { class: 'btn secondary', href: '#/' }, 'Retour à l\'accueil')) : null,
+    recordsCard(list, prs, ex => { ui.active = ex.id; redraw(); document.querySelector(`[data-ex="${ex.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
+}
+
+// ---------- Records personnels ----------
+// Un exercice vise un record quand l'objectif du jour (charge et reps proposées) dépasse, sur les séances passées,
+// la charge la plus lourde validée (record de charge) ou, à une charge déjà soulevée, le meilleur nombre de reps
+// à cette charge (record de reps). Battu = une série validée aujourd'hui dépasse l'un des deux.
+function prTarget(ex, sug, sessionRecId, entry) {
+  if (sug?.kg == null || !(sug.kg > 0)) return null;
+  const sets = exHistory(ex.id, sessionRecId).flatMap(x => x.sets).filter(x => x.kg > 0);
+  if (!sets.length) return null; // première fois : pas de record à battre
+  const maxKg = Math.max(...sets.map(x => x.kg));
+  const bestAt = kg => Math.max(-1, ...sets.filter(x => x.kg === kg).map(x => x.reps));
+  const doneToday = doneSets(entry).filter(x => x.kg > 0);
+  let t = null;
+  if (sug.kg > maxKg) t = { type: 'charge', goal: `${fmtKg(sug.kg)} kg`, detail: `Charge : record ${fmtKg(maxKg)} kg` };
+  else if (bestAt(sug.kg) >= 0 && sug.reps > bestAt(sug.kg)) t = { type: 'reps', goal: `${fmtKg(sug.kg)} kg × ${sug.reps}`, detail: `Reps à ${fmtKg(sug.kg)} kg : record ${bestAt(sug.kg)}` };
+  if (!t) return null;
+  const heavier = doneToday.find(x => x.kg > maxKg);
+  const moreReps = doneToday.find(x => bestAt(x.kg) >= 0 && x.reps > bestAt(x.kg));
+  if (heavier) Object.assign(t, { done: `✓ ${fmtKg(heavier.kg)} kg`, detail: 'Nouveau record de charge' });
+  else if (moreReps) Object.assign(t, { done: `✓ ${fmtKg(moreReps.kg)} kg × ${moreReps.reps}`, detail: `Nouveau record de reps à ${fmtKg(moreReps.kg)} kg` });
+  return t;
+}
+function recordsCard(list, prs, open) {
+  const rows = list.filter(ex => prs[ex.id]);
+  return h('div', { class: 'card pr-card' },
+    h('h3', {}, '🏆 Records à battre aujourd\'hui'),
+    rows.length ? rows.map(ex => { const p = prs[ex.id]; return h('button', { class: 'pr-row' + (p.done ? ' ok' : ''), onclick: () => open(ex) },
+      h('span', { class: 'n' }, ex.name), h('span', { class: 't' }, p.done || p.goal), h('span', { class: 'd' }, p.detail)); })
+      : h('p', { class: 'sub' }, 'Aucun record visé aujourd\'hui.'));
 }
 
 // Fiche d'un exercice (bibliothèque library.js) dans un volet par-dessus la séance.
