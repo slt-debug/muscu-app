@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '38 (adhérence dépliable)';
+const APP_VERSION = '39 (pas en haut)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -505,7 +505,7 @@ function viewHome() {
   const adh = adherence(ws, today());
 
   // Toucher la carte du jour (hors bouton) déplie ou replie la liste des autres séances, juste dessous.
-  const toggleMore = ev => { if (ev.target.closest('a')) return; ui.homeMore = !ui.homeMore; viewHome(); };
+  const toggleMore = ev => { if (ev.target.closest('a')) return; ui.homeMore = !ui.homeMore; ui.homeAdh = false; viewHome(); };
   const more = h('div', { class: 'more' }, h('span', {}, 'Autre séance'), h('span', { 'aria-hidden': 'true' }, ui.homeMore ? '⌃' : '›'));
   const hero = todayName
     ? h('div', { class: 'card hero', onclick: toggleMore, role: 'button', 'aria-expanded': String(!!ui.homeMore) },
@@ -524,9 +524,11 @@ function viewHome() {
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Muscu'), syncChip()),
     remindBanner(true),
+    stepsCard(),
     // Carte du jour et compteur de la semaine côte à côte (poids dans Corps, séances passées dans Historique).
-    // L'anneau autour du compteur montre l'adhérence au programme ; un toucher déplie son détail sous les tuiles.
-    h('div', { class: 'home-top' }, hero, h('button', { class: 'card week', onclick: () => { ui.homeAdh = !ui.homeAdh; viewHome(); }, 'aria-expanded': String(!!ui.homeAdh), 'aria-label': `Cette semaine, adhérence ${adh.score ?? 'non calculée'}` },
+    // L'anneau autour du compteur montre l'adhérence au programme ; un toucher déplie son détail sous les tuiles
+    // (un seul dépliage à la fois : il referme « Autre séance »).
+    h('div', { class: 'home-top' }, hero, h('button', { class: 'card week', onclick: () => { ui.homeAdh = !ui.homeAdh; ui.homeMore = false; viewHome(); }, 'aria-expanded': String(!!ui.homeAdh), 'aria-label': `Cette semaine, adhérence ${adh.score ?? 'non calculée'}` },
       h('div', { class: 'sub' }, 'Cette semaine'), adherenceRing(`${weekDone}/${Object.values(prog.days).filter(Boolean).length}`, adh.score),
       h('div', { class: 'sub' }, adh.score == null ? 'adhérence –' : `adhérence ${adh.score} %`, weekDup ? [h('br'), `dont ${weekDup} en double`] : null),
       h('div', { class: 'more' }, h('span', {}, 'Détails'), h('span', { 'aria-hidden': 'true' }, ui.homeAdh ? '⌃' : '›')))),
@@ -536,8 +538,7 @@ function viewHome() {
       return h('a', { class: 'btn secondary' + (days.length ? ' done' : ''), href: `#/seance/${encodeURIComponent(n)}/${today()}` }, n,
         days.length ? h('small', {}, `✓ ${days.join(', ')}`) : null);
     })),
-    ui.homeAdh ? adherenceDetails(adh) : null,
-    stepsCard());
+    ui.homeAdh ? adherenceDetails(adh) : null);
 }
 
 function viewSession(name, date) {
