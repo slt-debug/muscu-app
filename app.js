@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '34 (pas sur la page Séance)';
+const APP_VERSION = '35 (commentaire par exercice)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -554,16 +554,30 @@ function viewSession(name, date) {
     // Jugement de la charge : une seule flèche cochée à la fois, on la décoche en la touchant de nouveau. Aucun effet sur les charges proposées.
     const mark = kind => () => { entry.load = entry.load === kind ? null : kind; commit(date, name, ex, entry); redraw(); };
     // La rangée commence sous le bord gauche des boutons kg (colonne numéro 14 px + écart 4 px) et tout y fait 40 px de haut.
-    card.append(h('div', { class: 'row', style: 'margin-top:8px;gap:6px;flex-wrap:wrap;align-items:stretch;padding-left:18px' },
+    const actRow = 'margin-top:8px;gap:6px;align-items:stretch;padding-left:18px';
+    card.append(h('div', { class: 'row', style: actRow + ';flex-wrap:wrap' },
       h('button', { class: 'btn secondary small tight', onclick: () => { const last = entry.sets[entry.sets.length - 1]; entry.sets.push({ kg: last?.kg ?? null, reps: last?.reps ?? null, rir: '', done: false }); commit(date, name, ex, entry); redraw(); } }, '+ Série'),
       entry.sets.length > 1 ? h('button', { class: 'btn secondary small tight', onclick: () => { entry.sets.pop(); commit(date, name, ex, entry); redraw(); } }, '− Série') : null,
       h('a', { class: 'btn secondary small tight', href: `#/ex/${ex.id}` }, 'Historique'),
       planned.includes(ex) && nDone < ex.sets ? h('button', { class: 'btn secondary small tight', onclick: () => openSwap(ex, id, list.map(e => e.id), to => {
         swapExercise(date, name, ex, to); ui.active = to; redraw();
-      }) }, '⇄ Remplacer') : null,
-      h('span', { style: 'flex:1' }),
+      }) }, '⇄ Remplacer') : null));
+    // Commentaire libre de l'exercice pour cette séance : une ligne, qui s'agrandit pendant la saisie.
+    // Enregistré à la sortie du champ (pas de redessin, pour ne pas perdre le clavier).
+    const note = h('textarea', { class: 'ex-note', rows: 1, placeholder: '✎ Commentaire', 'aria-label': `Commentaire sur ${ex.name}` });
+    note.value = entry.comment || '';
+    const fit = () => { note.style.height = 'auto'; note.style.height = `${note.scrollHeight}px`; };
+    note.addEventListener('focus', fit);
+    note.addEventListener('input', fit);
+    note.addEventListener('blur', () => { note.style.height = ''; });
+    note.addEventListener('change', () => { const v = note.value.trim(); if (v) entry.comment = v; else delete entry.comment; commit(date, name, ex, entry); });
+    card.append(h('div', { class: 'row', style: actRow + ';align-items:flex-start' },
       loadIcon('up', entry.load === 'up', mark('up')),
-      loadIcon('down', entry.load === 'down', mark('down'))));
+      loadIcon('down', entry.load === 'down', mark('down')),
+      note));
+    // Rappel du commentaire de la dernière séance de cet exercice.
+    const prev = Object.values(db.sessions).filter(r => !r.deleted && r.date < date && r.entries?.[ex.id]?.comment).sort((a, b) => b.date.localeCompare(a.date))[0];
+    if (prev) card.append(h('div', { class: 'sub ex-prev' }, `${cap(fmtDateLong(prev.date))} : « ${prev.entries[ex.id].comment} »`));
     if (ex.swapOf) card.append(h('button', { class: 'linkbtn', onclick: () => { unswapExercise(date, name, ex.swapOf, ex.id); ui.active = ex.swapOf.id; redraw(); } }, `↺ Revenir à ${ex.swapOf.name}`));
     return card;
   });
