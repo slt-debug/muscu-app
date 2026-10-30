@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '39 (pas en haut)';
+const APP_VERSION = '40 (titre Séance)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -522,7 +522,7 @@ function viewHome() {
       more);
 
   mount(
-    h('div', { class: 'row between' }, h('h1', {}, 'Muscu'), syncChip()),
+    h('div', { class: 'row between' }, h('h1', {}, 'Séance'), syncChip()),
     remindBanner(true),
     stepsCard(),
     // Carte du jour et compteur de la semaine côte à côte (poids dans Corps, séances passées dans Historique).
