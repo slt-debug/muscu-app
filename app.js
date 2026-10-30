@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '47 (records à battre)';
+const APP_VERSION = '48 (écarts en orange)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -588,16 +588,29 @@ function viewSession(name, date) {
     if (!open) return card;
     card.append(h('div', { class: 'hint' }, sugs[ex.id].text));
     card.append(h('div', { class: 'set' }, h('span'), h('span', { class: 'head' }, 'kg'), h('span', { class: 'head' }, 'reps'), h('span', { class: 'head' }, 'réserve'), h('span')));
+    // Séries de la dernière séance de cet exercice : chaque valeur qui en diffère (même numéro de série)
+    // s'affiche en orange avec l'écart, pour voir ce qui change et fait un éventuel record.
+    const prevSets = exHistory(ex.id, id).at(-1)?.sets || [];
     entry.sets.forEach((st, i) => {
       const save1 = () => commit(date, name, ex, entry);
       const kgIn = h('input', { type: 'text', inputmode: 'decimal', value: st.kg == null ? '' : fmtKg(st.kg), 'aria-label': 'Charge en kg' });
       const repIn = h('input', { type: 'text', inputmode: 'numeric', value: st.reps == null ? '' : String(st.reps), 'aria-label': 'Répétitions' });
-      kgIn.addEventListener('change', () => { st.kg = num(kgIn.value); save1(); });
-      repIn.addEventListener('change', () => { st.reps = num(repIn.value); save1(); });
+      const dKg = h('span', { class: 'dlt', 'aria-hidden': 'true' }), dReps = h('span', { class: 'dlt', 'aria-hidden': 'true' });
+      const markDiff = () => {
+        for (const [input, d, key] of [[kgIn, dKg, 'kg'], [repIn, dReps, 'reps']]) {
+          const v = num(input.value), ref = prevSets[i]?.[key];
+          const diff = v != null && ref != null ? Math.round((v - ref) * 100) / 100 : 0;
+          input.classList.toggle('chg', !!diff);
+          d.textContent = diff ? `${diff > 0 ? '+' : '−'}${fmtKg(Math.abs(diff))}` : '';
+        }
+      };
+      markDiff();
+      kgIn.addEventListener('change', () => { st.kg = num(kgIn.value); save1(); markDiff(); });
+      repIn.addEventListener('change', () => { st.reps = num(repIn.value); save1(); markDiff(); });
       const bump = (input, key, delta, min) => () => {
         const cur = num(input.value) ?? (key === 'kg' ? (ex.kg ?? 0) : 0);
         const nv = Math.max(min, Math.round((cur + delta) * 100) / 100);
-        st[key] = nv; input.value = key === 'kg' ? fmtKg(nv) : String(nv); save1();
+        st[key] = nv; input.value = key === 'kg' ? fmtKg(nv) : String(nv); save1(); markDiff();
       };
       const rir = h('select', { class: 'rir', 'aria-label': 'Répétitions en réserve' },
         ['', '0', '1', '2', '3', '4'].map(v => h('option', { value: v, selected: String(st.rir) === v }, v === '' ? '–' : v)));
@@ -627,8 +640,8 @@ function viewSession(name, date) {
       } }, st.done ? '✓' : '○');
       card.append(h('div', { class: 'set' },
         h('span', { class: 'n' }, i + 1),
-        h('div', { class: 'stepper' }, h('button', { onclick: bump(kgIn, 'kg', -ex.step, 0) }, '−'), kgIn, h('button', { onclick: bump(kgIn, 'kg', ex.step, 0) }, '+')),
-        h('div', { class: 'stepper' }, h('button', { onclick: bump(repIn, 'reps', -1, 0) }, '−'), repIn, h('button', { onclick: bump(repIn, 'reps', 1, 0) }, '+')),
+        h('div', { class: 'stepper' }, h('button', { onclick: bump(kgIn, 'kg', -ex.step, 0) }, '−'), h('div', { class: 'val' }, kgIn, dKg), h('button', { onclick: bump(kgIn, 'kg', ex.step, 0) }, '+')),
+        h('div', { class: 'stepper' }, h('button', { onclick: bump(repIn, 'reps', -1, 0) }, '−'), h('div', { class: 'val' }, repIn, dReps), h('button', { onclick: bump(repIn, 'reps', 1, 0) }, '+')),
         rir, chk));
     });
     // Jugement de la charge : une seule flèche cochée à la fois, on la décoche en la touchant de nouveau. Aucun effet sur les charges proposées.
