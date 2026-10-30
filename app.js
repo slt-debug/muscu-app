@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '49 (force estimée par groupe)';
+const APP_VERSION = '50 (force estimée dans Objectifs)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -858,7 +858,6 @@ function viewHistory(sub) {
       h('b', {}, 'Cette semaine'),
       h('div', { class: 'list-item' }, h('span', {}, plural(week.length, 'séance')), h('span', { class: 'sub' }, timed.length ? `${fmtMin(weekMs)} au total` : 'durée non mesurée')),
       timed.length ? h('div', { class: 'list-item' }, h('span', {}, 'Durée moyenne'), h('span', { class: 'sub' }, fmtMin(weekMs / timed.length))) : null),
-    strengthCard(),
     recs.length || rows.length ? h('div', { class: 'navlist' },
       navRow('#/historique/seances', sessionsIcon(), '', 'Séances', recs.length ? `${plural(recs.length, 'séance')} · dernière ${recs[0].name}, ${fmtDate(recs[0].date)}` : 'Aucune séance'),
       navRow('#/historique/exercices', exercisesIcon(), 'ex', 'Exercices', `${plural(rows.length, 'exercice')} ${rows.length > 1 ? 'suivis' : 'suivi'} · 1RM, progression`))
@@ -1805,6 +1804,7 @@ function viewGoals() {
     h('div', { class: 'row between' }, h('h1', {}, 'Objectifs'), syncChip()),
     weeklyStepsCard(),
     weeklyAdherenceCard(),
+    strengthCard(),
     h('div', { class: 'pills p3' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))),
     goalCard('Poids', 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
     goalCard('Masse grasse', '%', pts('mg'), goals?.mg ?? null, 'var(--series-2)', fmtKg),
