@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '50 (force estimée dans Objectifs)';
+const APP_VERSION = '51 (objectifs dans Réglages)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1257,7 +1257,7 @@ async function syncNow(manual, forceWithings) {
   // (la page Exercices garde sa recherche en cours : pas de redessin.)
   // (Corps n'est pas redessiné pendant une saisie dépliée : les champs en cours seraient perdus.)
   const readOnlyView = ['', '#/', '#/historique', '#/historique/seances'].includes(location.hash) || (location.hash === '#/corps' && !ui.bodyEntry)
-    || (location.hash === '#/objectifs' && !ui.goalEdit) || location.hash.startsWith('#/ex/');
+    || location.hash === '#/objectifs' || location.hash.startsWith('#/ex/');
   if (localChanged && readOnlyView) render();
   if (location.hash === '#/withings' && wConnected()) render(); // résultat de l'import
 }
@@ -1777,24 +1777,30 @@ function goalCard(title, unit, pts, target, color, fmt) {
       h('div', { class: 'sub' }, `${part} % du chemin depuis ${fmt(start)} ${unit} · encore ${fmt(r1(Math.abs(cur - target)))} ${unit === '%' ? 'pt' : unit}`)] : null,
     shown.length ? lineChart([{ name: 'Moyenne 7 jours', points: avgPts }, { name: 'Mesure', points: shown, raw: true, line: false }], unit, { target, color }) : h('p', { class: 'sub' }, 'Aucune mesure sur cette période.'));
 }
-function goalsForm() {
+// Réglages › Objectifs : poids cible, pas par jour et point de départ (la masse grasse n'est plus suivie dans Objectifs).
+const goalsSummary = () => [goals?.poids != null ? `poids ${fmtKg(goals.poids)} kg` : null, `${fmtInt(stepGoal())} pas / jour`].filter(Boolean).join(' · ');
+function viewGoalSettings() {
+  setTab('set');
   const g = goals || {};
   const firstBody = Object.values(db.body).filter(b => !b.deleted).map(b => b.date).sort()[0];
   const fld = (label, key, ph) => { const i = h('input', { type: 'text', inputmode: 'decimal', value: g[key] != null ? fmtKg(g[key]) : '', placeholder: ph }); return [h('label', { class: 'field' }, h('span', {}, label), i), i]; };
-  const [fP, iP] = fld('Poids (kg)', 'poids', 'ex. 90'), [fM, iM] = fld('Masse grasse (%)', 'mg', 'ex. 15'), [fS, iS] = fld('Pas / jour', 'pas', '10000');
+  const [fP, iP] = fld('Poids cible (kg)', 'poids', 'ex. 90'), [fS, iS] = fld('Pas / jour', 'pas', '10000');
   const iD = h('input', { type: 'date', value: g.depart || firstBody || today() });
   const msg = h('p', { class: 'sub', role: 'status' });
-  return h('div', { class: 'card entry' },
-    h('div', { class: 'grid3' }, fP, fM, fS),
-    h('label', { class: 'field' }, h('span', {}, 'Point de départ'), iD),
-    h('p', { class: 'sub' }, 'Le point de départ sert à calculer la part du chemin faite. Un objectif laissé vide n\'est pas affiché.'),
-    msg,
-    h('button', { class: 'btn', onclick: async () => {
-      if (!cfgOk()) { msg.textContent = 'Configure d\'abord la synchronisation GitHub.'; return; }
-      msg.textContent = 'Enregistrement…';
-      try { await saveGoals({ poids: num(iP.value), mg: num(iM.value), pas: num(iS.value) ? Math.round(num(iS.value)) : null, depart: iD.value || null }); ui.goalEdit = false; viewGoals(); }
-      catch (e) { msg.textContent = `Échec : ${e.message}`; }
-    } }, 'Enregistrer'));
+  mount(
+    h('a', { class: 'back', href: '#/reglages' }, '‹ Réglages'),
+    h('h1', {}, 'Objectifs'),
+    h('div', { class: 'card entry' },
+      h('div', { class: 'grid2' }, fP, fS),
+      h('label', { class: 'field' }, h('span', {}, 'Point de départ'), iD),
+      h('p', { class: 'sub' }, 'Le point de départ sert à calculer la part du chemin faite vers le poids cible. Un objectif de poids laissé vide n\'est pas affiché.'),
+      msg,
+      h('button', { class: 'btn', onclick: async () => {
+        if (!cfgOk()) { msg.textContent = 'Configure d\'abord la synchronisation GitHub.'; return; }
+        msg.textContent = 'Enregistrement…';
+        try { await saveGoals({ poids: num(iP.value), pas: num(iS.value) ? Math.round(num(iS.value)) : null, depart: iD.value || null }); msg.textContent = 'Objectifs enregistrés.'; }
+        catch (e) { msg.textContent = `Échec : ${e.message}`; }
+      } }, 'Enregistrer')));
 }
 function viewGoals() {
   setTab('obj');
@@ -1804,13 +1810,9 @@ function viewGoals() {
     h('div', { class: 'row between' }, h('h1', {}, 'Objectifs'), syncChip()),
     weeklyStepsCard(),
     weeklyAdherenceCard(),
-    strengthCard(),
     h('div', { class: 'pills p3' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))),
     goalCard('Poids', 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
-    goalCard('Masse grasse', '%', pts('mg'), goals?.mg ?? null, 'var(--series-2)', fmtKg),
-    h('div', { class: 'card fold' }, h('button', { class: 'more', style: 'margin-top:0;padding-top:0;border-top:0', 'aria-expanded': String(!!ui.goalEdit), onclick: () => { ui.goalEdit = !ui.goalEdit; viewGoals(); } },
-      h('span', {}, 'Modifier les objectifs'), h('span', { 'aria-hidden': 'true' }, ui.goalEdit ? '⌃' : '›'))),
-    ui.goalEdit ? goalsForm() : null);
+    strengthCard());
 }
 
 function viewSettings() {
@@ -1824,6 +1826,7 @@ function viewSettings() {
       navRow('#/sync', syncIcon(), 'gh', 'Synchronisation GitHub', syncSummary(), 'sync-sum'),
       navRow('#/withings', scaleIcon(), 'scale', 'Balance Withings', withingsSummary()),
       navRow('#/rappel', '⌀', 'remind-ic', 'Rappel mensurations', remindSummary()),
+      navRow('#/cibles', '◎', 'goal-ic', 'Objectifs', goalsSummary()),
       navRow('#/sauvegarde', saveIcon(), 'data', 'Sauvegarde', 'Exporter, importer')),
     standalone ? null : [h('h2', {}, 'Installer sur l\'iPhone'),
       h('p', { class: 'sub' }, 'Dans Safari : bouton Partager, puis « Sur l\'écran d\'accueil ». L\'appli s\'ouvrira ensuite en plein écran et fonctionnera sans réseau.')],
@@ -2001,6 +2004,7 @@ function render() {
     case 'withings': return viewWithings();
     case 'rappel': return viewReminder();
     case 'objectifs': return viewGoals();
+    case 'cibles': return viewGoalSettings();
     default: return viewHome();
   }
 }
@@ -2020,7 +2024,7 @@ const MAIN_PAGES = ['#/objectifs', '#/', '#/historique', '#/corps', '#/reglages'
 function parentPage(hash) {
   if (hash.startsWith('#/historique/')) return '#/historique';
   if (hash.startsWith('#/ex/')) return exFrom.startsWith('#/seance/') ? exFrom : '#/historique/exercices';
-  if (['#/repos', '#/sync', '#/sauvegarde', '#/withings', '#/rappel'].includes(hash)) return '#/reglages';
+  if (['#/repos', '#/sync', '#/sauvegarde', '#/withings', '#/rappel', '#/cibles'].includes(hash)) return '#/reglages';
   return null;
 }
 function swipeTarget(dir) { // dir = 1 : balayage vers la gauche (suivante), -1 : vers la droite
