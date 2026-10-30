@@ -73,6 +73,10 @@ a { color: var(--accent); }
 .home-top > .card { margin: 0; }
 .home-top .week { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding-inline: 6px; }
 .home-top .week .sub { font-size: 12.5px; line-height: 1.3; }
+/* Carte du jour : un toucher déplie « Autre séance » */
+.home-top .hero { cursor: pointer; display: flex; flex-direction: column; }
+.home-top .hero .more { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--grid); color: var(--accent); font-size: 15px; font-weight: 600; }
+.home-top .hero > :nth-last-child(2) { margin-bottom: 12px; } /* écart minimal au-dessus de « Autre séance » */
 /* Adhérence au programme : anneau autour du compteur, détail dans un volet */
 button.card.week { font: inherit; color: inherit; width: 100%; cursor: pointer; gap: 2px; }
 .adh-ring { width: 66px; height: 66px; margin: 2px 0; }

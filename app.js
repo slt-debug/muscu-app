@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '36 (adhérence au programme)';
+const APP_VERSION = '37 (autre séance dépliable)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -512,17 +512,22 @@ function viewHome() {
   const todayRec = todayName && db.sessions[sessionId(today(), todayName)];
   const nxt = nextTrainingDay();
 
+  // Toucher la carte du jour (hors bouton) déplie ou replie la liste des autres séances, juste dessous.
+  const toggleMore = ev => { if (ev.target.closest('a')) return; ui.homeMore = !ui.homeMore; viewHome(); };
+  const more = h('div', { class: 'more' }, h('span', {}, 'Autre séance'), h('span', { 'aria-hidden': 'true' }, ui.homeMore ? '⌃' : '›'));
   const hero = todayName
-    ? h('div', { class: 'card' },
+    ? h('div', { class: 'card hero', onclick: toggleMore, role: 'button', 'aria-expanded': String(!!ui.homeMore) },
       h('div', { class: 'sub' }, `Aujourd'hui, ${JOURS[now.getDay()]}`),
       h('h1', {}, todayName),
       h('div', { class: 'sub' }, `${prog.sessions[todayName].length} exercices${todayRec ? ` · ${setsDone(todayRec)} séries faites` : ''}`),
       h('div', { style: 'height:12px' }),
-      h('a', { class: 'btn', href: `#/seance/${encodeURIComponent(todayName)}/${today()}` }, todayRec ? 'Reprendre' : 'Commencer'))
-    : h('div', { class: 'card' },
+      h('a', { class: 'btn', href: `#/seance/${encodeURIComponent(todayName)}/${today()}` }, todayRec ? 'Reprendre' : 'Commencer'),
+      more)
+    : h('div', { class: 'card hero', onclick: toggleMore, role: 'button', 'aria-expanded': String(!!ui.homeMore) },
       h('div', { class: 'sub' }, `Aujourd'hui, ${JOURS[now.getDay()]}`),
       h('h1', {}, 'Jour de repos'),
-      h('div', { class: 'sub' }, `Prochaine séance : ${nxt.day}, ${nxt.name}.`));
+      h('div', { class: 'sub' }, `Prochaine séance : ${nxt.day}, ${nxt.name}.`),
+      more);
 
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Muscu'), syncChip()),
@@ -532,9 +537,8 @@ function viewHome() {
     h('div', { class: 'home-top' }, hero, (adh => h('button', { class: 'card week', onclick: openAdherenceSheet, 'aria-label': `Cette semaine, adhérence ${adh.score ?? 'non calculée'}` },
       h('div', { class: 'sub' }, 'Cette semaine'), adherenceRing(`${weekDone}/${Object.values(prog.days).filter(Boolean).length}`, adh.score),
       h('div', { class: 'sub' }, adh.score == null ? 'adhérence –' : `adhérence ${adh.score} %`, weekDup ? [h('br'), `dont ${weekDup} en double`] : null)))(adherence(ws, today()))),
-    h('h2', {}, 'Autre séance'),
     // Séances déjà faites cette semaine : grisées avec le(s) jour(s), mais toujours ouvrables.
-    h('div', { class: 'grid2' }, Object.keys(prog.sessions).map(n => {
+    !ui.homeMore ? null : h('div', { class: 'grid2' }, Object.keys(prog.sessions).map(n => {
       const days = weekRecs.filter(r => r.name === n).map(r => r.date).sort().map(d => JOURS[parseYmd(d).getDay()]);
       return h('a', { class: 'btn secondary' + (days.length ? ' done' : ''), href: `#/seance/${encodeURIComponent(n)}/${today()}` }, n,
         days.length ? h('small', {}, `✓ ${days.join(', ')}`) : null);
