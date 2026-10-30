@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '30 (rappel mensurations)';
+const APP_VERSION = '31 (séances faites grisées)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -454,8 +454,12 @@ function viewHome() {
     remindBanner(true),
     hero,
     h('h2', {}, 'Autre séance'),
-    h('div', { class: 'grid2' }, Object.keys(prog.sessions).map(n =>
-      h('a', { class: 'btn secondary', href: `#/seance/${encodeURIComponent(n)}/${today()}` }, n))),
+    // Séances déjà faites cette semaine : grisées avec le jour, mais toujours ouvrables.
+    h('div', { class: 'grid2' }, Object.keys(prog.sessions).map(n => {
+      const done = recs.find(r => r.name === n && r.date >= ws);
+      return h('a', { class: 'btn secondary' + (done ? ' done' : ''), href: `#/seance/${encodeURIComponent(n)}/${today()}` }, n,
+        done ? h('small', {}, `✓ ${JOURS[parseYmd(done.date).getDay()]}`) : null);
+    })),
     h('div', { class: 'grid2' },
       h('div', { class: 'card' }, h('div', { class: 'sub' }, 'Cette semaine'), h('div', { class: 'big' }, `${weekDone}/${Object.values(prog.days).filter(Boolean).length}`), h('div', { class: 'sub' }, 'séances')),
       h('div', { class: 'card' }, h('div', { class: 'sub' }, 'Poids'), h('div', { class: 'big' }, body[0]?.poids != null ? fmtKg(body[0].poids) : '–'), h('div', { class: 'sub' }, body[0] ? `kg, ${fmtDate(body[0].date)}` : 'à saisir dans Corps'))),
