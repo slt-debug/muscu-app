@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '35 (commentaire par exercice)';
+const APP_VERSION = '36 (adhérence au programme)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -425,6 +425,81 @@ function weekStart() {
   const d = new Date(); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return ymd(d);
 }
 
+// ---------- Adhérence au programme ----------
+// Score d'une semaine (lundi ws) jusqu'au jour upTo inclus = moyenne des critères disponibles :
+// séries validées ÷ séries prévues à date (plafonné à 100 %), séances faites le jour prévu (± 1 jour),
+// séries dont les reps tombent dans la fourchette prévue. La séance du jour n'est due que si elle est commencée.
+const addDays = (d, n) => { const x = parseYmd(d); x.setDate(x.getDate() + n); return ymd(x); };
+function adherence(ws, upTo) {
+  const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i)).filter(d => d <= upTo);
+  const recs = Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0 && r.date >= ws && r.date <= addDays(ws, 6));
+  let planned = 0;
+  const plannedDays = [];
+  for (const d of days) {
+    const name = programFor(d).days[parseYmd(d).getDay()];
+    if (!name) continue;
+    plannedDays.push({ d, name });
+    if (d === today() && d === upTo && !db.sessions[sessionId(d, name)]?.entries) continue; // pas encore commencée
+    planned += (programFor(d).sessions[name] || []).reduce((n, e) => n + e.sets, 0);
+  }
+  const done = recs.reduce((n, r) => n + setsDone(r), 0);
+  const onDay = recs.filter(r => plannedDays.some(p => p.name === r.name && Math.abs(parseYmd(p.d) - parseYmd(r.date)) <= 864e5)).length;
+  let inRange = 0, ranged = 0;
+  for (const r of recs) {
+    const list = programFor(r.date).sessions[r.name] || [];
+    for (const [exId, e] of Object.entries(r.entries || {})) {
+      const ex = list.find(x => x.id === exId) || list.find(x => r.swaps?.[x.id] === exId);
+      if (!ex || !(ex.hi > 0)) continue;
+      for (const x of doneSets(e)) { ranged++; if (x.reps >= ex.lo && x.reps <= ex.hi) inRange++; }
+    }
+  }
+  const pct = (a, b) => b ? Math.min(100, Math.round(a / b * 100)) : null;
+  const c = { series: pct(done, planned), jours: pct(onDay, recs.length), reps: pct(inRange, ranged) };
+  const vals = Object.values(c).filter(v => v != null);
+  return { ...c, score: vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null, done, planned, onDay, nRecs: recs.length, inRange, ranged };
+}
+// Semaines complètes d'affilée à 80 % ou plus, avant la semaine en cours.
+function adherenceStreak() {
+  const first = Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).map(r => r.date).sort()[0];
+  let n = 0;
+  for (let ws = addDays(weekStart(), -7); first && addDays(ws, 6) >= first && n < 52; ws = addDays(ws, -7)) {
+    const a = adherence(ws, addDays(ws, 6));
+    if (a.score == null || a.score < 80) break;
+    n++;
+  }
+  return n;
+}
+const adhColor = s => s == null ? 'var(--grid)' : s >= 85 ? 'var(--good)' : s >= 60 ? 'var(--warn)' : 'var(--bad)';
+// Anneau autour du compteur de séances : remplissage et couleur = score d'adhérence.
+function adherenceRing(label, score) {
+  const r = 29, len = 2 * Math.PI * r;
+  return s('svg', { viewBox: '0 0 70 70', class: 'adh-ring', 'aria-hidden': 'true' },
+    s('circle', { cx: 35, cy: 35, r, fill: 'none', stroke: 'var(--field)', 'stroke-width': 6 }),
+    score ? s('circle', { cx: 35, cy: 35, r, fill: 'none', stroke: adhColor(score), 'stroke-width': 6, 'stroke-linecap': 'round', 'stroke-dasharray': `${len * score / 100} ${len}`, transform: 'rotate(-90 35 35)' }) : null,
+    s('text', { x: 35, y: 41, 'text-anchor': 'middle' }, label));
+}
+function openAdherenceSheet() {
+  if (document.querySelector('.sheet-wrap')) return;
+  const a = adherence(weekStart(), today()), streak = adherenceStreak();
+  const close = () => wrap.remove();
+  const line = (name, v, txt) => h('div', { class: 'adh-row' },
+    h('span', {}, h('b', {}, name), h('small', {}, txt)), h('span', { class: 'adh-v', style: `color:${adhColor(v)}` }, v == null ? '–' : `${v} %`));
+  const wrap = h('div', { class: 'sheet-wrap' },
+    h('div', { class: 'dim', onclick: close }),
+    h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Adhérence au programme' },
+      h('span', { class: 'grab', 'aria-hidden': 'true' }),
+      h('h2', { style: 'margin:0' }, 'Adhérence cette semaine'),
+      h('p', { class: 'sub' }, 'Moyenne des trois critères, à date : un jour de repos ou une séance pas encore commencée ne compte pas.'),
+      line('Séries', a.series, a.planned ? `${a.done} sur ${a.planned} prévues à date` : 'rien de prévu pour l\'instant'),
+      line('Jours', a.jours, a.nRecs ? `${a.onDay} séance${a.onDay > 1 ? 's' : ''} sur ${a.nRecs} au jour prévu (± 1 jour)` : 'aucune séance faite'),
+      line('Reps', a.reps, a.ranged ? `${a.inRange} série${a.inRange > 1 ? 's' : ''} sur ${a.ranged} dans la fourchette` : 'aucune série validée'),
+      h('div', { class: 'adh-row total' }, h('b', {}, 'Score'), h('span', { class: 'adh-v', style: `color:${adhColor(a.score)}` }, a.score == null ? '–' : `${a.score} %`)),
+      h('p', { class: 'sub' }, `Constance : ${streak ? `${plural(streak, 'semaine')} d'affilée à 80 % ou plus` : 'pas encore de semaine complète à 80 % ou plus'}.`),
+      h('p', { class: 'sub' }, 'Vert à partir de 85 %, orange de 60 à 84 %, rouge en dessous.'),
+      h('button', { class: 'btn', onclick: close }, 'OK')));
+  document.body.append(wrap);
+}
+
 function viewHome() {
   setTab('home');
   const now = new Date();
@@ -453,9 +528,10 @@ function viewHome() {
     h('div', { class: 'row between' }, h('h1', {}, 'Muscu'), syncChip()),
     remindBanner(true),
     // Carte du jour et compteur de la semaine côte à côte (poids dans Corps, séances passées dans Historique).
-    h('div', { class: 'home-top' }, hero,
-      h('div', { class: 'card week' }, h('div', { class: 'sub' }, 'Cette semaine'), h('div', { class: 'big' }, `${weekDone}/${Object.values(prog.days).filter(Boolean).length}`),
-        h('div', { class: 'sub' }, 'séances', weekDup ? [h('br'), `dont ${weekDup} en double`] : null))),
+    // L'anneau autour du compteur montre l'adhérence au programme ; un toucher ouvre son détail.
+    h('div', { class: 'home-top' }, hero, (adh => h('button', { class: 'card week', onclick: openAdherenceSheet, 'aria-label': `Cette semaine, adhérence ${adh.score ?? 'non calculée'}` },
+      h('div', { class: 'sub' }, 'Cette semaine'), adherenceRing(`${weekDone}/${Object.values(prog.days).filter(Boolean).length}`, adh.score),
+      h('div', { class: 'sub' }, adh.score == null ? 'adhérence –' : `adhérence ${adh.score} %`, weekDup ? [h('br'), `dont ${weekDup} en double`] : null)))(adherence(ws, today()))),
     h('h2', {}, 'Autre séance'),
     // Séances déjà faites cette semaine : grisées avec le(s) jour(s), mais toujours ouvrables.
     h('div', { class: 'grid2' }, Object.keys(prog.sessions).map(n => {
