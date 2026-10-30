@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '31 (séances faites grisées)';
+const APP_VERSION = '32 (séances en double)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -432,7 +432,8 @@ function viewHome() {
   const todayName = prog.days[now.getDay()];
   const recs = Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).sort((a, b) => b.date.localeCompare(a.date));
   const ws = weekStart();
-  const weekDone = recs.filter(r => r.date >= ws).length;
+  const weekRecs = recs.filter(r => r.date >= ws);
+  const weekDone = weekRecs.length, weekDup = weekDone - new Set(weekRecs.map(r => r.name)).size;
   const todayRec = todayName && db.sessions[sessionId(today(), todayName)];
   const nxt = nextTrainingDay();
   const body = Object.values(db.body).filter(b => !b.deleted).sort((a, b) => b.date.localeCompare(a.date));
@@ -454,14 +455,15 @@ function viewHome() {
     remindBanner(true),
     hero,
     h('h2', {}, 'Autre séance'),
-    // Séances déjà faites cette semaine : grisées avec le jour, mais toujours ouvrables.
+    // Séances déjà faites cette semaine : grisées avec le(s) jour(s), mais toujours ouvrables.
     h('div', { class: 'grid2' }, Object.keys(prog.sessions).map(n => {
-      const done = recs.find(r => r.name === n && r.date >= ws);
-      return h('a', { class: 'btn secondary' + (done ? ' done' : ''), href: `#/seance/${encodeURIComponent(n)}/${today()}` }, n,
-        done ? h('small', {}, `✓ ${JOURS[parseYmd(done.date).getDay()]}`) : null);
+      const days = weekRecs.filter(r => r.name === n).map(r => r.date).sort().map(d => JOURS[parseYmd(d).getDay()]);
+      return h('a', { class: 'btn secondary' + (days.length ? ' done' : ''), href: `#/seance/${encodeURIComponent(n)}/${today()}` }, n,
+        days.length ? h('small', {}, `✓ ${days.join(', ')}`) : null);
     })),
     h('div', { class: 'grid2' },
-      h('div', { class: 'card' }, h('div', { class: 'sub' }, 'Cette semaine'), h('div', { class: 'big' }, `${weekDone}/${Object.values(prog.days).filter(Boolean).length}`), h('div', { class: 'sub' }, 'séances')),
+      h('div', { class: 'card' }, h('div', { class: 'sub' }, 'Cette semaine'), h('div', { class: 'big' }, `${weekDone}/${Object.values(prog.days).filter(Boolean).length}`),
+        h('div', { class: 'sub' }, 'séances', weekDup ? [h('br'), `dont ${weekDup} en double`] : null)),
       h('div', { class: 'card' }, h('div', { class: 'sub' }, 'Poids'), h('div', { class: 'big' }, body[0]?.poids != null ? fmtKg(body[0].poids) : '–'), h('div', { class: 'sub' }, body[0] ? `kg, ${fmtDate(body[0].date)}` : 'à saisir dans Corps'))),
     h('h2', {}, 'Dernières séances'),
     recs.length ? h('div', { class: 'card' }, recs.slice(0, 6).map(r => h('a', { class: 'list-item', href: `#/seance/${encodeURIComponent(r.name)}/${r.date}` },
