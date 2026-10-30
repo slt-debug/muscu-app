@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '42 (saisie dépliable dans Corps)';
+const APP_VERSION = '43 (page Objectifs)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -352,13 +352,15 @@ function niceStep(raw) {
   return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
 }
 // series : [{name, cls, markers, points: [{t, v, label}]}] ; la 1re série pilote le survol.
-function lineChart(series, unit) {
+// opt.target : ligne d'objectif en pointillés (comprise dans l'échelle) ; opt.color : couleur des séries.
+function lineChart(series, unit, opt = {}) {
   const pts = series.flatMap(x => x.points);
   if (!pts.length) return h('p', { class: 'muted' }, 'Pas encore de données.');
   const W = 340, H = 200, m = { l: 40, r: 14, t: 14, b: 26 };
   let x0 = Math.min(...pts.map(p => p.t)), x1 = Math.max(...pts.map(p => p.t));
   if (x0 === x1) { x0 -= 864e5 * 3; x1 += 864e5 * 3; }
-  let y0 = Math.min(...pts.map(p => p.v)), y1 = Math.max(...pts.map(p => p.v));
+  const vals = pts.map(p => p.v).concat(opt.target != null ? [opt.target] : []);
+  let y0 = Math.min(...vals), y1 = Math.max(...vals);
   const span = y1 - y0 || Math.max(1, y1 * 0.05);
   y0 -= span * 0.2; y1 += span * 0.2;
   const step = niceStep((y1 - y0) / 4);
@@ -373,6 +375,8 @@ function lineChart(series, unit) {
       s('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, fmtKg(v)));
   }
   svg.append(s('line', { class: 'axis', x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }));
+  if (opt.target != null) svg.append(s('line', { class: 'target', x1: m.l, x2: W - m.r, y1: Y(opt.target), y2: Y(opt.target) }),
+    s('text', { class: 'target-l', x: W - m.r, y: Y(opt.target) - 5, 'text-anchor': 'end' }, `objectif ${fmtKg(opt.target)}`));
   const dates = [...new Set(pts.map(p => p.t))].sort((a, b) => a - b);
   const xt = dates.length <= 2 ? dates : [dates[0], dates[Math.floor(dates.length / 2)], dates[dates.length - 1]];
   xt.forEach((t, i) => svg.append(s('text', { x: X(t), y: H - 8, 'text-anchor': i === 0 && xt.length > 1 ? 'start' : i === xt.length - 1 && xt.length > 1 ? 'end' : 'middle' }, fmtDate(ymd(new Date(t))))));
@@ -383,7 +387,7 @@ function lineChart(series, unit) {
   }
   const cross = s('line', { class: 'cross', y1: m.t, y2: H - m.b, visibility: 'hidden' });
   svg.append(cross);
-  const wrap = h('div', { class: 'chart' }, svg);
+  const wrap = h('div', { class: 'chart', style: opt.color ? `--series-1:${opt.color}` : null }, svg);
   const tip = h('div', { class: 'tip', hidden: true });
   wrap.append(tip);
   const lead = series[0].points.length ? series[0].points : pts;
@@ -1150,6 +1154,7 @@ async function syncNow(manual, forceWithings) {
     }
     if (await pullPrograms()) localChanged = true;
     if (await pullReminder()) localChanged = true;
+    if (await pullGoals()) localChanged = true;
     if (!wi?.stepDays && await pullActivity()) localChanged = true;
     sync.state = 'ok'; const d = new Date(); sync.at = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; sync.msg = '';
     const nS = Object.values(db.sessions).filter(r => !r.deleted).length, nB = Object.values(db.body).filter(b => !b.deleted).length;
@@ -1164,7 +1169,8 @@ async function syncNow(manual, forceWithings) {
   // Des données distantes sont arrivées : on redessine les vues de lecture (pas la séance en cours de saisie).
   // (la page Exercices garde sa recherche en cours : pas de redessin.)
   // (Corps n'est pas redessiné pendant une saisie dépliée : les champs en cours seraient perdus.)
-  const readOnlyView = ['', '#/', '#/historique', '#/historique/seances'].includes(location.hash) || (location.hash === '#/corps' && !ui.bodyEntry) || location.hash.startsWith('#/ex/');
+  const readOnlyView = ['', '#/', '#/historique', '#/historique/seances'].includes(location.hash) || (location.hash === '#/corps' && !ui.bodyEntry)
+    || (location.hash === '#/objectifs' && !ui.goalEdit) || location.hash.startsWith('#/ex/');
   if (localChanged && readOnlyView) render();
   if (location.hash === '#/withings' && wConnected()) render(); // résultat de l'import
 }
@@ -1413,7 +1419,7 @@ async function pullActivity() {
     return true; // nouveaux pas : la page Séance est redessinée
   } catch (e) { slog(`Pas non lus : ${e.message}`); return false; }
 }
-const STEP_GOAL = 10000;
+const stepGoal = () => goals?.pas || 10000; // objectif de pas réglé dans la page Objectifs
 const fmtInt = n => Math.round(n).toLocaleString('fr-FR');
 const fmtK = n => `${(Math.round(n / 100) / 10).toLocaleString('fr-FR')}k`;
 // Carte des pas de la page Séance : le jour en cours (partiel, mis à jour à chaque import Withings), puis la semaine
@@ -1425,23 +1431,23 @@ function stepsCard() {
   const at = wauth.lastImport || activity.updatedAt;
   const week = []; { const d = parseYmd(weekStart()); for (let i = 0; i < 7; i++) { week.push(ymd(d)); d.setDate(d.getDate() + 1); } }
   const wDone = week.filter(d => d < today() && all[d]).map(d => all[d].pas);
-  const M = Math.max(STEP_GOAL * 1.25, ...week.map(d => all[d]?.pas || 0));
+  const M = Math.max(stepGoal() * 1.25, ...week.map(d => all[d]?.pas || 0));
   const H = 78; // part de la colonne laissée à la barre, le reste pour le chiffre
   const col = d => {
     const v = d > today() ? null : all[d]?.pas;
     if (v == null) return h('div', { class: 'col empty' }, h('span'));
-    return h('div', { class: 'col' + (v >= STEP_GOAL ? ' ok' : '') + (d === today() ? ' now' : '') },
+    return h('div', { class: 'col' + (v >= stepGoal() ? ' ok' : '') + (d === today() ? ' now' : '') },
       h('b', {}, fmtK(v)), h('span', { style: `height:${Math.max(3, v / M * H)}%` }));
   };
   return h('div', { class: 'card' },
     h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Pas aujourd'hui${t != null && at && ymd(new Date(at)) === today() ? ` · mis à jour à ${fmtHour(at)}` : ''}`), h('span', { class: 'wb' }, '⚖ Withings')),
     h('div', { class: 'row', style: 'align-items:baseline;gap:12px' }, h('div', { class: 'big' }, t != null ? fmtInt(t) : '–'),
-      t == null ? h('span', { class: 'sub' }, `pas encore de données${y != null ? ` · hier ${fmtInt(y)}${y >= STEP_GOAL ? ' ✓' : ''}` : ''}`)
-        : h('span', { class: t >= STEP_GOAL ? 'steps-ok' : 'sub' }, t >= STEP_GOAL ? '✓ objectif atteint' : `encore ${fmtInt(STEP_GOAL - t)} pour ${fmtInt(STEP_GOAL)}`)),
+      t == null ? h('span', { class: 'sub' }, `pas encore de données${y != null ? ` · hier ${fmtInt(y)}${y >= stepGoal() ? ' ✓' : ''}` : ''}`)
+        : h('span', { class: t >= stepGoal() ? 'steps-ok' : 'sub' }, t >= stepGoal() ? '✓ objectif atteint' : `encore ${fmtInt(stepGoal() - t)} pour ${fmtInt(stepGoal())}`)),
     h('div', { class: 'sub' }, wDone.length
-      ? `Cette semaine : ${(k => `${k} jour${k > 1 ? 's' : ''}`)(wDone.filter(x => x >= STEP_GOAL).length)} sur ${wDone.length} à ${fmtInt(STEP_GOAL)} · moyenne ${fmtInt(wDone.reduce((a, b) => a + b, 0) / wDone.length)}`
+      ? `Cette semaine : ${(k => `${k} jour${k > 1 ? 's' : ''}`)(wDone.filter(x => x >= stepGoal()).length)} sur ${wDone.length} à ${fmtInt(stepGoal())} · moyenne ${fmtInt(wDone.reduce((a, b) => a + b, 0) / wDone.length)}`
       : 'La semaine commence aujourd\'hui.'),
-    h('div', { class: 'stepbars', 'aria-hidden': 'true' }, week.map(col), h('i', { style: `bottom:${STEP_GOAL / M * H}%` })),
+    h('div', { class: 'stepbars', 'aria-hidden': 'true' }, week.map(col), h('i', { style: `bottom:${stepGoal() / M * H}%` })),
     h('div', { class: 'stepdays' }, week.map(d => h('span', { class: d === today() ? 'today' : '' }, ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'][week.indexOf(d)]))));
 }
 async function setWithingsAuto(auto) {
@@ -1597,6 +1603,104 @@ function viewReminder() {
     h('div', { class: 'card sub' }, s.last ? `Dernière mesure : ${fmtDate(s.last)}` : 'Aucune mensuration enregistrée.',
       r.on ? [h('br'), h('b', { style: 'color:var(--ink)' }, `Prochain rappel : ${next}`)] : null),
     h('p', { class: 'sub' }, 'Le rappel apparaît en haut de Séance et de Corps, avec une pastille sur l\'onglet Corps, jusqu\'à la saisie. Si rien n\'est saisi, la notification revient chaque semaine le même jour.'));
+}
+
+// ---------- Objectifs ----------
+// Objectifs de poids, masse grasse et pas, saisis dans l'appli et partagés dans goals.json du dépôt privé.
+// Chaque carte : valeur actuelle (moyenne 7 jours), objectif, part du chemin faite depuis le point de départ, courbe.
+const GKEY = 'muscu.goals';
+let goals = load(GKEY, null);
+async function pullGoals() {
+  try {
+    const r = await ghFetch(ghUrl().replace(/[^/]+$/, 'goals.json'), { headers: ghHeaders(), cache: 'no-store' });
+    if (!r.ok) return false; // 404 : aucun objectif saisi
+    const next = decodeContent(await r.json());
+    if (JSON.stringify(next) === JSON.stringify(goals)) return false;
+    goals = next; store(GKEY, goals);
+    return true;
+  } catch (e) { slog(`Objectifs non lus : ${e.message}`); return false; }
+}
+async function saveGoals(patch) {
+  goals = await updateRepoJson('goals.json', d => ({ ...d, ...patch, updatedAt: Date.now() }), 'objectifs');
+  store(GKEY, goals);
+}
+const PERIODS = [['4s', '4 sem.', 28], ['3m', '3 mois', 91], ['all', 'Tout', null]];
+// Moyenne des valeurs sur les 7 jours qui finissent à t (points {t, v}).
+const avg7 = (pts, t) => { const w = pts.filter(p => p.t <= t && p.t > t - 7 * 864e5); return w.length ? w.reduce((a, p) => a + p.v, 0) / w.length : null; };
+function goalCard(title, unit, pts, target, color, fmt) {
+  const last = pts[pts.length - 1];
+  if (!last) return h('div', { class: 'card goal' }, h('div', { class: 'row between' }, h('b', {}, title), target != null ? h('span', { class: 'sub' }, `objectif ${fmt(target)} ${unit}`) : null), h('p', { class: 'sub' }, 'Pas encore de mesure.'));
+  const cur = avg7(pts, last.t), ago = avg7(pts, last.t - 28 * 864e5);
+  const depart = goals?.depart || ymd(new Date(pts[0].t));
+  const start = (pts.find(p => p.t >= parseYmd(depart).getTime()) || pts[0]).v;
+  const part = target != null && start !== target ? Math.max(0, Math.min(100, Math.round((start - cur) / (start - target) * 100))) : null;
+  const per = PERIODS.find(p => p[0] === (ui.objPeriod || '3m'))[2];
+  const shown = per ? pts.filter(p => p.t > Date.now() - per * 864e5) : pts;
+  const avgPts = shown.map(p => ({ t: p.t, v: r1(avg7(pts, p.t)) }));
+  return h('div', { class: 'card goal' },
+    h('div', { class: 'row between' }, h('b', {}, title), h('span', { class: 'sub' }, target != null ? `objectif ${fmt(target)} ${unit}` : 'pas d\'objectif')),
+    h('div', { class: 'row', style: 'align-items:baseline;gap:10px;flex-wrap:wrap' }, h('div', { class: 'big' }, `${fmt(r1(cur))} ${unit}`),
+      h('span', { class: 'sub' }, `moyenne 7 jours${ago != null ? ` · ${cur - ago > 0 ? '+' : ''}${fmt(r1(cur - ago))} en 4 sem.` : ''}`)),
+    part != null ? [h('div', { class: 'track' }, h('i', { style: `width:${part}%;background:${color || 'var(--series-1)'}` })),
+      h('div', { class: 'sub' }, `${part} % du chemin depuis ${fmt(start)} ${unit} · encore ${fmt(r1(Math.abs(cur - target)))} ${unit === '%' ? 'pt' : unit}`)] : null,
+    shown.length ? lineChart([{ name: 'Moyenne 7 jours', points: avgPts }, { name: 'Mesure', points: shown, raw: true, line: false }], unit, { target, color }) : h('p', { class: 'sub' }, 'Aucune mesure sur cette période.'));
+}
+function stepsGoalCard() {
+  const all = activity?.days || {}, goal = stepGoal();
+  const keys = Object.keys(all).sort();
+  if (!keys.length) return h('div', { class: 'card goal' }, h('b', {}, 'Pas'), h('p', { class: 'sub' }, 'Pas encore de données Withings.'));
+  const per = PERIODS.find(p => p[0] === (ui.objPeriod || '3m'))[2];
+  const from = per ? addDays(today(), -(per - 1)) : keys[0];
+  const days = []; for (let d = from < keys[0] ? keys[0] : from; d <= today(); d = addDays(d, 1)) days.push(d);
+  const done = days.filter(d => d < today() && all[d]);
+  const last7 = done.slice(-7).map(d => all[d].pas);
+  const hit = done.filter(d => all[d].pas >= goal).length;
+  const W = 340, H = 120, m = { l: 6, r: 6, t: 10, b: 18 }, n = days.length, bw = (W - m.l - m.r) / n;
+  const M = Math.max(goal * 1.25, ...days.map(d => all[d]?.pas || 0));
+  const Y = v => H - m.b - v / M * (H - m.t - m.b);
+  const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Pas par jour' },
+    days.map((d, i) => { const v = all[d]?.pas; return v == null ? null : s('rect', { class: 'bar' + (v >= goal ? ' ok' : '') + (d === today() ? ' now' : ''), x: m.l + i * bw + bw * 0.12, y: Y(v), width: Math.max(1, bw * 0.76), height: H - m.b - Y(v), rx: Math.min(2, bw / 4) }); }),
+    s('line', { class: 'target', x1: m.l, x2: W - m.r, y1: Y(goal), y2: Y(goal) }),
+    s('text', { x: m.l, y: H - 4 }, fmtDate(days[0])), s('text', { x: W - m.r, y: H - 4, 'text-anchor': 'end' }, fmtDate(days[n - 1])));
+  return h('div', { class: 'card goal' },
+    h('div', { class: 'row between' }, h('b', {}, 'Pas'), h('span', { class: 'sub' }, `objectif ${fmtInt(goal)} / jour`)),
+    h('div', { class: 'row', style: 'align-items:baseline;gap:10px;flex-wrap:wrap' }, h('div', { class: 'big' }, last7.length ? fmtInt(last7.reduce((a, b) => a + b, 0) / last7.length) : '–'),
+      h('span', { class: 'sub' }, `moyenne 7 jours · ${hit} jour${hit > 1 ? 's' : ''} sur ${done.length} à l'objectif`)),
+    h('div', { class: 'chart steps-chart' }, svg),
+    h('div', { class: 'sub' }, 'Vert = objectif atteint ; le jour en cours est partiel.'));
+}
+function goalsForm() {
+  const g = goals || {};
+  const firstBody = Object.values(db.body).filter(b => !b.deleted).map(b => b.date).sort()[0];
+  const fld = (label, key, ph) => { const i = h('input', { type: 'text', inputmode: 'decimal', value: g[key] != null ? fmtKg(g[key]) : '', placeholder: ph }); return [h('label', { class: 'field' }, h('span', {}, label), i), i]; };
+  const [fP, iP] = fld('Poids (kg)', 'poids', 'ex. 90'), [fM, iM] = fld('Masse grasse (%)', 'mg', 'ex. 15'), [fS, iS] = fld('Pas / jour', 'pas', '10000');
+  const iD = h('input', { type: 'date', value: g.depart || firstBody || today() });
+  const msg = h('p', { class: 'sub', role: 'status' });
+  return h('div', { class: 'card entry' },
+    h('div', { class: 'grid3' }, fP, fM, fS),
+    h('label', { class: 'field' }, h('span', {}, 'Point de départ'), iD),
+    h('p', { class: 'sub' }, 'Le point de départ sert à calculer la part du chemin faite. Un objectif laissé vide n\'est pas affiché.'),
+    msg,
+    h('button', { class: 'btn', onclick: async () => {
+      if (!cfgOk()) { msg.textContent = 'Configure d\'abord la synchronisation GitHub.'; return; }
+      msg.textContent = 'Enregistrement…';
+      try { await saveGoals({ poids: num(iP.value), mg: num(iM.value), pas: num(iS.value) ? Math.round(num(iS.value)) : null, depart: iD.value || null }); ui.goalEdit = false; viewGoals(); }
+      catch (e) { msg.textContent = `Échec : ${e.message}`; }
+    } }, 'Enregistrer'));
+}
+function viewGoals() {
+  setTab('obj');
+  const list = Object.values(db.body).filter(b => !b.deleted).sort((a, b) => a.date.localeCompare(b.date));
+  const pts = key => list.filter(b => b[key] != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b[key] }));
+  mount(
+    h('div', { class: 'row between' }, h('h1', {}, 'Objectifs'), syncChip()),
+    h('div', { class: 'pills p3' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))),
+    goalCard('Poids', 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
+    goalCard('Masse grasse', '%', pts('mg'), goals?.mg ?? null, 'var(--series-2)', fmtKg),
+    stepsGoalCard(),
+    h('div', { class: 'card fold' }, h('button', { class: 'more', style: 'margin-top:0;padding-top:0;border-top:0', 'aria-expanded': String(!!ui.goalEdit), onclick: () => { ui.goalEdit = !ui.goalEdit; viewGoals(); } },
+      h('span', {}, 'Modifier les objectifs'), h('span', { 'aria-hidden': 'true' }, ui.goalEdit ? '⌃' : '›'))),
+    ui.goalEdit ? goalsForm() : null);
 }
 
 function viewSettings() {
@@ -1786,6 +1890,7 @@ function render() {
     case 'sauvegarde': return viewBackup();
     case 'withings': return viewWithings();
     case 'rappel': return viewReminder();
+    case 'objectifs': return viewGoals();
     default: return viewHome();
   }
 }
@@ -1801,7 +1906,7 @@ window.addEventListener('hashchange', () => {
 // Sur les 4 pages principales : gauche = page suivante de la barre du bas, droite = précédente.
 // Sur une sous-page : droite = retour à la page parente. Rien pendant une séance, sur un champ, un curseur,
 // un élément qui défile de côté, ni avec un volet ouvert.
-const MAIN_PAGES = ['#/', '#/historique', '#/corps', '#/reglages'];
+const MAIN_PAGES = ['#/objectifs', '#/', '#/historique', '#/corps', '#/reglages'];
 function parentPage(hash) {
   if (hash.startsWith('#/historique/')) return '#/historique';
   if (hash.startsWith('#/ex/')) return exFrom.startsWith('#/seance/') ? exFrom : '#/historique/exercices';

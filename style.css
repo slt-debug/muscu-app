@@ -7,6 +7,7 @@
   --grid: #e1e0d9;
   --axis: #c3c2b7;
   --series-1: #2a78d6;
+  --series-2: #c8641a;
   --accent: #2a78d6;
   --on-accent: #ffffff;
   --good: #006300;
@@ -27,6 +28,7 @@
     --grid: #2c2c2a;
     --axis: #383835;
     --series-1: #3987e5;
+    --series-2: #e8903a;
     --accent: #3987e5;
     --good: #0ca30c;
     --warn: #e08a1e;
@@ -157,15 +159,26 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .chart .dot { fill: var(--series-1); stroke: var(--surface); stroke-width: 2; }
 .chart .dot.raw { fill: var(--muted); }
 .chart .cross { stroke: var(--axis); stroke-width: 1; }
+/* Page Objectifs : ligne d'objectif, barres de pas, jauge « part du chemin » */
+.chart .target { stroke: var(--series-1); stroke-width: 1.2; stroke-dasharray: 4 4; }
+.chart text.target-l { fill: var(--ink-2); font-size: 10.5px; }
+.steps-chart .target { stroke: var(--ink-2); }
+.steps-chart .bar { fill: var(--grid); }
+.steps-chart .bar.ok { fill: var(--good); opacity: .75; }
+.steps-chart .bar.now { opacity: .5; }
+.card.goal .big { font-size: 28px; }
+.track { height: 6px; border-radius: 3px; background: var(--field); margin: 8px 0 3px; overflow: hidden; }
+.track i { display: block; height: 100%; border-radius: 3px; }
+.pills.p3 { grid-template-columns: repeat(3, 1fr); }
 .tip { position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--axis); border-radius: 8px; padding: 6px 8px; font-size: 13px; white-space: nowrap; transform: translate(-50%, -110%); box-shadow: 0 2px 8px rgba(0,0,0,.18); }
 .legend { display: flex; gap: 14px; font-size: 13px; color: var(--ink-2); margin: 4px 4px 0; }
 .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
 
 #tabs {
-  position: fixed; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(4, 1fr);
+  position: fixed; left: 0; right: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--surface); border-top: 1px solid var(--grid); padding-bottom: env(safe-area-inset-bottom); z-index: 5;
 }
-#tabs a { text-align: center; padding: 14px 4px; color: var(--ink-2); text-decoration: none; font-size: 14px; font-weight: 600; }
+#tabs a { text-align: center; padding: 14px 2px; color: var(--ink-2); text-decoration: none; font-size: 13px; font-weight: 600; white-space: nowrap; }
 #tabs a.on { color: var(--accent); }
 #timer {
   position: fixed; left: 12px; right: 12px; bottom: calc(58px + env(safe-area-inset-bottom)); z-index: 6;
