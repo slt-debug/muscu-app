@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '51 (objectifs dans Réglages)';
+const APP_VERSION = '52 (pas et adhérence côte à côte)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1525,15 +1525,16 @@ function weeklyAdherenceCard() {
   const weeks = Array.from({ length: 8 }, (_, i) => addDays(weekStart(), -7 * (7 - i)));
   const scores = weeks.map((ws, i) => addDays(ws, 6) < firsts[0] ? null : adherence(ws, i === 7 ? today() : addDays(ws, 6)).score);
   const cur = scores[7], H = 78;
-  return h('div', { class: 'card' },
-    h('div', { class: 'sub' }, 'Adhérence · semaine en cours'),
-    h('div', { class: 'row', style: 'align-items:baseline;gap:12px' }, h('div', { class: 'big' }, cur != null ? `${cur} %` : '–'),
-      cur == null ? h('span', { class: 'sub' }, 'rien de prévu pour l\'instant')
-        : h('span', { class: cur >= ADH_GOAL ? 'steps-ok' : 'sub' }, cur >= ADH_GOAL ? '✓ objectif atteint' : `${ADH_GOAL - cur} pt${ADH_GOAL - cur > 1 ? 's' : ''} sous ${ADH_GOAL} %`)),
+  // Demi-largeur, à côté des pas : chiffre seulement sur la semaine en cours, numéros de semaine seuls.
+  return h('div', { class: 'card half' },
+    h('div', { class: 'sub' }, 'Adhérence'),
+    h('div', { class: 'big' }, cur != null ? `${cur} %` : '–'),
+    cur == null ? h('div', { class: 'sub' }, 'rien de prévu')
+      : h('div', { class: cur >= ADH_GOAL ? 'steps-ok' : 'sub' }, cur >= ADH_GOAL ? '✓ objectif' : `${ADH_GOAL - cur} pt${ADH_GOAL - cur > 1 ? 's' : ''} sous ${ADH_GOAL} %`),
     h('div', { class: 'stepbars', 'aria-hidden': 'true' }, weeks.map((ws, i) => scores[i] == null ? h('div', { class: 'col empty' }, h('span'))
-      : h('div', { class: 'col' + (scores[i] >= ADH_GOAL ? ' ok' : '') + (i === 7 ? ' now' : '') }, h('b', {}, String(scores[i])), h('span', { style: `height:${Math.max(3, scores[i] / 100 * H)}%` }))),
+      : h('div', { class: 'col' + (scores[i] >= ADH_GOAL ? ' ok' : '') + (i === 7 ? ' now' : '') }, i === 7 ? h('b', {}, String(scores[i])) : null, h('span', { style: `height:${Math.max(3, scores[i] / 100 * H)}%` }))),
       h('i', { style: `bottom:${ADH_GOAL / 100 * H}%` })),
-    h('div', { class: 'stepdays' }, weeks.map((ws, i) => h('span', { class: i === 7 ? 'today' : '' }, `S${isoWeek(ws)}`))));
+    h('div', { class: 'stepdays' }, weeks.map((ws, i) => h('span', { class: i === 7 ? 'today' : '' }, String(isoWeek(ws))))));
 }
 // Tuile des pas de la page Objectifs : une barre par semaine (lundi → dimanche, 8 dernières semaines),
 // hauteur = moyenne de pas par jour sur les jours terminés ; la semaine en cours est hachurée.
@@ -1544,15 +1545,16 @@ function weeklyStepsCard() {
   const avgOf = ws => { const v = Array.from({ length: 7 }, (_, i) => addDays(ws, i)).filter(d => d < today() && all[d]).map(d => all[d].pas); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
   const avgs = weeks.map(avgOf), cur = avgs[7];
   const M = Math.max(goal * 1.25, ...avgs.map(v => v || 0)), H = 78;
-  return h('div', { class: 'card' },
-    h('div', { class: 'row between' }, h('span', { class: 'sub' }, 'Pas · moyenne par jour semaine en cours'), h('span', { class: 'wb' }, '⚖ Withings')),
-    h('div', { class: 'row', style: 'align-items:baseline;gap:12px' }, h('div', { class: 'big' }, cur != null ? fmtInt(cur) : '–'),
-      cur == null ? h('span', { class: 'sub' }, 'pas encore de jour terminé')
-        : h('span', { class: cur >= goal ? 'steps-ok' : 'sub' }, cur >= goal ? '✓ au-dessus de l\'objectif' : `${fmtInt(goal - cur)} sous l'objectif`)),
+  // Demi-largeur, à côté de l'adhérence : chiffre seulement sur la semaine en cours, numéros de semaine seuls.
+  return h('div', { class: 'card half' },
+    h('div', { class: 'row between' }, h('span', { class: 'sub' }, 'Pas · moy./jour'), h('span', { class: 'wb', title: 'Withings' }, '⚖')),
+    h('div', { class: 'big' }, cur != null ? fmtInt(cur) : '–'),
+    cur == null ? h('div', { class: 'sub' }, 'aucun jour terminé')
+      : h('div', { class: cur >= goal ? 'steps-ok' : 'sub' }, cur >= goal ? '✓ objectif' : `${fmtInt(goal - cur)} sous l'objectif`),
     h('div', { class: 'stepbars', 'aria-hidden': 'true' }, weeks.map((ws, i) => avgs[i] == null ? h('div', { class: 'col empty' }, h('span'))
-      : h('div', { class: 'col' + (avgs[i] >= goal ? ' ok' : '') + (i === 7 ? ' now' : '') }, h('b', {}, fmtK(avgs[i])), h('span', { style: `height:${Math.max(3, avgs[i] / M * H)}%` }))),
+      : h('div', { class: 'col' + (avgs[i] >= goal ? ' ok' : '') + (i === 7 ? ' now' : '') }, i === 7 ? h('b', {}, fmtK(avgs[i])) : null, h('span', { style: `height:${Math.max(3, avgs[i] / M * H)}%` }))),
       h('i', { style: `bottom:${goal / M * H}%` })),
-    h('div', { class: 'stepdays' }, weeks.map((ws, i) => h('span', { class: i === 7 ? 'today' : '' }, `S${isoWeek(ws)}`))));
+    h('div', { class: 'stepdays' }, weeks.map((ws, i) => h('span', { class: i === 7 ? 'today' : '' }, String(isoWeek(ws))))));
 }
 // Carte des pas de la page Séance : le jour en cours (partiel, mis à jour à chaque import Withings), puis la semaine
 // du lundi au dimanche avec le nombre de pas en milliers sur chaque barre (jour en cours hachuré, jours à venir vides).
@@ -1808,8 +1810,7 @@ function viewGoals() {
   const pts = key => list.filter(b => b[key] != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b[key] }));
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Objectifs'), syncChip()),
-    weeklyStepsCard(),
-    weeklyAdherenceCard(),
+    h('div', { class: 'duo' }, weeklyStepsCard(), weeklyAdherenceCard()), // pas et adhérence sur la même ligne
     h('div', { class: 'pills p3' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))),
     goalCard('Poids', 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
     strengthCard());
