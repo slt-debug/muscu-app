@@ -242,14 +242,18 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .kvg { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; font-size: 15px; }
 /* Pas quotidiens (onglet Corps) */
 .steps-ok { color: var(--good); font-weight: 600; font-size: 14px; }
-.stepbars { position: relative; display: flex; gap: 5px; align-items: flex-end; height: 56px; margin-top: 10px; }
-.stepbars span { flex: 1; border-radius: 3px 3px 0 0; background: var(--grid); }
-.stepbars span.ok { background: var(--good); opacity: .75; }
+.stepbars { position: relative; display: flex; gap: 5px; height: 80px; margin-top: 10px; }
+.stepbars .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 0; }
+.stepbars .col b { position: relative; z-index: 1; background: var(--card); padding: 0 2px; border-radius: 3px; font-size: 11.5px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; margin-bottom: 2px; }
+.stepbars .col.ok b { color: var(--good); }
+.stepbars span { width: 100%; border-radius: 3px 3px 0 0; background: var(--grid); }
+.stepbars .ok span { background: var(--good); opacity: .75; }
+.stepbars .col.empty span { height: 3px; opacity: .6; }
 .stepbars i { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--ink-2); }
 .stepdays { display: flex; gap: 5px; font-size: 11px; color: var(--muted); margin-top: 3px; }
 .stepdays span { flex: 1; text-align: center; }
-.stepbars span.now { background: repeating-linear-gradient(135deg, var(--grid) 0 4px, transparent 4px 8px); box-shadow: inset 0 0 0 1px var(--grid); }
-.stepbars span.future, .stepbars span.none { height: 3px; background: var(--grid); opacity: .6; }
+.stepbars .now span { background: repeating-linear-gradient(135deg, var(--grid) 0 4px, transparent 4px 8px); box-shadow: inset 0 0 0 1px var(--grid); opacity: 1; }
+.stepbars .now.ok span { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--good) 75%, transparent) 0 4px, transparent 4px 8px); box-shadow: inset 0 0 0 1px var(--good); }
 .stepdays span.today { color: var(--ink); font-weight: 700; }
 /* Historique : sous-pages Séances et Exercices */
 .grp-head { display: flex; justify-content: space-between; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin: 16px 2px 0; }
