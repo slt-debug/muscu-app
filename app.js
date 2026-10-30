@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '48 (écarts en orange)';
+const APP_VERSION = '49 (force estimée par groupe)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -858,10 +858,53 @@ function viewHistory(sub) {
       h('b', {}, 'Cette semaine'),
       h('div', { class: 'list-item' }, h('span', {}, plural(week.length, 'séance')), h('span', { class: 'sub' }, timed.length ? `${fmtMin(weekMs)} au total` : 'durée non mesurée')),
       timed.length ? h('div', { class: 'list-item' }, h('span', {}, 'Durée moyenne'), h('span', { class: 'sub' }, fmtMin(weekMs / timed.length))) : null),
+    strengthCard(),
     recs.length || rows.length ? h('div', { class: 'navlist' },
       navRow('#/historique/seances', sessionsIcon(), '', 'Séances', recs.length ? `${plural(recs.length, 'séance')} · dernière ${recs[0].name}, ${fmtDate(recs[0].date)}` : 'Aucune séance'),
       navRow('#/historique/exercices', exercisesIcon(), 'ex', 'Exercices', `${plural(rows.length, 'exercice')} ${rows.length > 1 ? 'suivis' : 'suivi'} · 1RM, progression`))
       : h('p', { class: 'muted' }, 'Aucune donnée. Valide une série pendant une séance pour commencer.'));
+}
+// Force estimée par groupe musculaire, semaine par semaine (12 dernières). Pour chaque exercice : meilleur 1RM estimé
+// de la semaine, rapporté à sa toute première semaine (= 100). Indice d'un groupe = moyenne de ses exercices déjà
+// commencés, la dernière valeur connue d'un exercice étant reportée les semaines où il n'est pas fait.
+function strengthCard() {
+  const groupOf = ex => ex.group || CATALOG.find(c => c.id === ex.id)?.group || 'Autres';
+  const weekOf = d => addDays(d, -((parseYmd(d).getDay() + 6) % 7));
+  const exs = exRows().map(({ ex, hist }) => {
+    const byWeek = {};
+    for (const x of hist) { const v = bestE1rm(x.sets), w = weekOf(x.date); if (v != null && (byWeek[w] == null || v > byWeek[w])) byWeek[w] = v; }
+    const ws = Object.keys(byWeek).sort();
+    return ws.length ? { grp: groupOf(ex), byWeek, ws, base: byWeek[ws[0]] } : null;
+  }).filter(e => e && e.grp !== 'Cardio');
+  if (!exs.length) return null;
+  const first = exs.map(e => e.ws[0]).sort()[0];
+  const weeks = []; for (let w = first; w <= weekStart(); w = addDays(w, 7)) weeks.push(w);
+  const shown = weeks.slice(-12);
+  const series = [...HIST_GROUPS, 'Autres'].map(g => {
+    const mine = exs.filter(e => e.grp === g);
+    if (!mine.length) return null;
+    const pts = shown.map(w => {
+      const idx = mine.map(e => { const k = e.ws.filter(x => x <= w).pop(); return k ? e.byWeek[k] / e.base * 100 : null; }).filter(v => v != null);
+      return idx.length ? idx.reduce((a, b) => a + b, 0) / idx.length : null;
+    });
+    return pts.some(v => v != null) ? { g, pts } : null;
+  }).filter(Boolean);
+  const all = series.flatMap(s => s.pts).filter(v => v != null).concat([100]);
+  const lo = Math.min(...all) - 1, hi = Math.max(...all) + 1;
+  const W = 200, H = 34, X = i => shown.length > 1 ? 4 + i / (shown.length - 1) * (W - 8) : W / 2, Y = v => H - 4 - (v - lo) / (hi - lo) * (H - 8);
+  return h('div', { class: 'card strength' },
+    h('b', {}, 'Force estimée par groupe'),
+    h('div', { class: 'sub' }, `Indice 100 = première semaine de chaque exercice · ${plural(shown.length, 'semaine')}`),
+    series.map(({ g, pts }) => {
+      const p = pts.map((v, i) => v == null ? null : [X(i), Y(v)]).filter(Boolean);
+      const gain = Math.round(pts.filter(v => v != null).pop() - 100);
+      return h('div', { class: 'str-row' }, h('span', {}, g),
+        s('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', 'aria-hidden': 'true' },
+          s('line', { class: 'base', x1: 0, x2: W, y1: Y(100), y2: Y(100) }),
+          p.length > 1 ? s('polyline', { points: p.map(q => q.join(',')).join(' ') }) : null,
+          s('circle', { cx: p[p.length - 1][0], cy: p[p.length - 1][1], r: 3 })),
+        h('span', { class: 'v ' + (gain > 0 ? 'up' : gain < 0 ? 'down' : '') }, `${gain > 0 ? '+' : gain < 0 ? '−' : ''}${Math.abs(gain)} %`));
+    }));
 }
 // Toutes les séances, groupées par semaine (du lundi), avec le nombre et le temps total de chaque semaine.
 function viewHistorySessions() {
