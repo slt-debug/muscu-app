@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '45 (pas par semaine, ouverture sur Objectifs)';
+const APP_VERSION = '46 (adhérence par semaine)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1428,6 +1428,26 @@ function isoWeek(d) {
   const jan4 = new Date(x.getFullYear(), 0, 4);
   return 1 + Math.round(((x - jan4) / 864e5 - 3 + (jan4.getDay() + 6) % 7) / 7);
 }
+// Tuile d'adhérence de la page Objectifs : même modèle et mêmes couleurs que la tuile des pas
+// (gris sous 85 %, vert à partir de 85 %). Semaine passée calculée sur ses 7 jours, semaine en cours à date.
+// Les semaines d'avant le début du suivi (premier programme daté ou première séance) restent vides.
+const ADH_GOAL = 85;
+function weeklyAdherenceCard() {
+  const firsts = [...(programs?.versions || []).map(v => v.from), ...Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).map(r => r.date)].filter(Boolean).sort();
+  if (!firsts.length) return null;
+  const weeks = Array.from({ length: 8 }, (_, i) => addDays(weekStart(), -7 * (7 - i)));
+  const scores = weeks.map((ws, i) => addDays(ws, 6) < firsts[0] ? null : adherence(ws, i === 7 ? today() : addDays(ws, 6)).score);
+  const cur = scores[7], H = 78;
+  return h('div', { class: 'card' },
+    h('div', { class: 'sub' }, 'Adhérence · semaine en cours'),
+    h('div', { class: 'row', style: 'align-items:baseline;gap:12px' }, h('div', { class: 'big' }, cur != null ? `${cur} %` : '–'),
+      cur == null ? h('span', { class: 'sub' }, 'rien de prévu pour l\'instant')
+        : h('span', { class: cur >= ADH_GOAL ? 'steps-ok' : 'sub' }, cur >= ADH_GOAL ? '✓ objectif atteint' : `${ADH_GOAL - cur} pt${ADH_GOAL - cur > 1 ? 's' : ''} sous ${ADH_GOAL} %`)),
+    h('div', { class: 'stepbars', 'aria-hidden': 'true' }, weeks.map((ws, i) => scores[i] == null ? h('div', { class: 'col empty' }, h('span'))
+      : h('div', { class: 'col' + (scores[i] >= ADH_GOAL ? ' ok' : '') + (i === 7 ? ' now' : '') }, h('b', {}, String(scores[i])), h('span', { style: `height:${Math.max(3, scores[i] / 100 * H)}%` }))),
+      h('i', { style: `bottom:${ADH_GOAL / 100 * H}%` })),
+    h('div', { class: 'stepdays' }, weeks.map((ws, i) => h('span', { class: i === 7 ? 'today' : '' }, `S${isoWeek(ws)}`))));
+}
 // Tuile des pas de la page Objectifs : une barre par semaine (lundi → dimanche, 8 dernières semaines),
 // hauteur = moyenne de pas par jour sur les jours terminés ; la semaine en cours est hachurée.
 function weeklyStepsCard() {
@@ -1696,6 +1716,7 @@ function viewGoals() {
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Objectifs'), syncChip()),
     weeklyStepsCard(),
+    weeklyAdherenceCard(),
     h('div', { class: 'pills p3' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))),
     goalCard('Poids', 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
     goalCard('Masse grasse', '%', pts('mg'), goals?.mg ?? null, 'var(--series-2)', fmtKg),
