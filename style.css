@@ -75,7 +75,8 @@ a { color: var(--accent); }
 .home-top .week .sub { font-size: 12.5px; line-height: 1.3; }
 /* Carte du jour : un toucher déplie « Autre séance » */
 .home-top .hero { cursor: pointer; display: flex; flex-direction: column; }
-.home-top .hero .more { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--grid); color: var(--accent); font-size: 15px; font-weight: 600; }
+.home-top .week .more { width: 100%; margin-top: 10px; padding-inline: 4px; }
+.home-top .more { display: flex; justify-content: space-between; align-items: center; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--grid); color: var(--accent); font-size: 15px; font-weight: 600; }
 .home-top .hero > :nth-last-child(2) { margin-bottom: 12px; } /* écart minimal au-dessus de « Autre séance » */
 /* Adhérence au programme : anneau autour du compteur, détail dans un volet */
 button.card.week { font: inherit; color: inherit; width: 100%; cursor: pointer; gap: 2px; }
@@ -84,6 +85,8 @@ button.card.week { font: inherit; color: inherit; width: 100%; cursor: pointer; 
 .adh-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--grid); }
 .adh-row small { display: block; color: var(--ink-2); font-size: 13px; }
 .adh-row.total { border-bottom: 0; }
+.adh-det { padding-block: 4px 12px; }
+.adh-det .adh-row:first-child { padding-top: 6px; }
 .adh-v { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
 /* Page Séance : séance déjà faite cette semaine (reste cliquable) */
 .btn.secondary.done { background: transparent; box-shadow: inset 0 0 0 1px var(--grid); color: var(--muted); padding-block: 6px; }

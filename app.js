@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '37 (autre séance dépliable)';
+const APP_VERSION = '38 (adhérence dépliable)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -478,26 +478,17 @@ function adherenceRing(label, score) {
     score ? s('circle', { cx: 35, cy: 35, r, fill: 'none', stroke: adhColor(score), 'stroke-width': 6, 'stroke-linecap': 'round', 'stroke-dasharray': `${len * score / 100} ${len}`, transform: 'rotate(-90 35 35)' }) : null,
     s('text', { x: 35, y: 41, 'text-anchor': 'middle' }, label));
 }
-function openAdherenceSheet() {
-  if (document.querySelector('.sheet-wrap')) return;
-  const a = adherence(weekStart(), today()), streak = adherenceStreak();
-  const close = () => wrap.remove();
+// Détail de l'adhérence, déplié sous les tuiles du haut de la page Séance.
+function adherenceDetails(a) {
+  const streak = adherenceStreak();
   const line = (name, v, txt) => h('div', { class: 'adh-row' },
     h('span', {}, h('b', {}, name), h('small', {}, txt)), h('span', { class: 'adh-v', style: `color:${adhColor(v)}` }, v == null ? '–' : `${v} %`));
-  const wrap = h('div', { class: 'sheet-wrap' },
-    h('div', { class: 'dim', onclick: close }),
-    h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Adhérence au programme' },
-      h('span', { class: 'grab', 'aria-hidden': 'true' }),
-      h('h2', { style: 'margin:0' }, 'Adhérence cette semaine'),
-      h('p', { class: 'sub' }, 'Moyenne des trois critères, à date : un jour de repos ou une séance pas encore commencée ne compte pas.'),
-      line('Séries', a.series, a.planned ? `${a.done} sur ${a.planned} prévues à date` : 'rien de prévu pour l\'instant'),
-      line('Jours', a.jours, a.nRecs ? `${a.onDay} séance${a.onDay > 1 ? 's' : ''} sur ${a.nRecs} au jour prévu (± 1 jour)` : 'aucune séance faite'),
-      line('Reps', a.reps, a.ranged ? `${a.inRange} série${a.inRange > 1 ? 's' : ''} sur ${a.ranged} dans la fourchette` : 'aucune série validée'),
-      h('div', { class: 'adh-row total' }, h('b', {}, 'Score'), h('span', { class: 'adh-v', style: `color:${adhColor(a.score)}` }, a.score == null ? '–' : `${a.score} %`)),
-      h('p', { class: 'sub' }, `Constance : ${streak ? `${plural(streak, 'semaine')} d'affilée à 80 % ou plus` : 'pas encore de semaine complète à 80 % ou plus'}.`),
-      h('p', { class: 'sub' }, 'Vert à partir de 85 %, orange de 60 à 84 %, rouge en dessous.'),
-      h('button', { class: 'btn', onclick: close }, 'OK')));
-  document.body.append(wrap);
+  return h('div', { class: 'card adh-det' },
+    line('Séries', a.series, a.planned ? `${a.done} sur ${a.planned} prévues à date` : 'rien de prévu pour l\'instant'),
+    line('Jours', a.jours, a.nRecs ? `${a.onDay} séance${a.onDay > 1 ? 's' : ''} sur ${a.nRecs} au jour prévu (± 1 jour)` : 'aucune séance faite'),
+    line('Reps', a.reps, a.ranged ? `${a.inRange} série${a.inRange > 1 ? 's' : ''} sur ${a.ranged} dans la fourchette` : 'aucune série validée'),
+    h('div', { class: 'adh-row total' }, h('b', {}, 'Score'), h('span', { class: 'adh-v', style: `color:${adhColor(a.score)}` }, a.score == null ? '–' : `${a.score} %`)),
+    h('p', { class: 'sub' }, `Constance : ${streak ? `${plural(streak, 'semaine')} d'affilée à 80 % ou plus` : 'pas encore de semaine complète à 80 % ou plus'}. Score = moyenne des trois critères à date ; un jour de repos ou une séance pas encore commencée ne compte pas. Vert à partir de 85 %, orange de 60 à 84 %, rouge en dessous.`));
 }
 
 function viewHome() {
@@ -511,6 +502,7 @@ function viewHome() {
   const weekDone = weekRecs.length, weekDup = weekDone - new Set(weekRecs.map(r => r.name)).size;
   const todayRec = todayName && db.sessions[sessionId(today(), todayName)];
   const nxt = nextTrainingDay();
+  const adh = adherence(ws, today());
 
   // Toucher la carte du jour (hors bouton) déplie ou replie la liste des autres séances, juste dessous.
   const toggleMore = ev => { if (ev.target.closest('a')) return; ui.homeMore = !ui.homeMore; viewHome(); };
@@ -533,16 +525,18 @@ function viewHome() {
     h('div', { class: 'row between' }, h('h1', {}, 'Muscu'), syncChip()),
     remindBanner(true),
     // Carte du jour et compteur de la semaine côte à côte (poids dans Corps, séances passées dans Historique).
-    // L'anneau autour du compteur montre l'adhérence au programme ; un toucher ouvre son détail.
-    h('div', { class: 'home-top' }, hero, (adh => h('button', { class: 'card week', onclick: openAdherenceSheet, 'aria-label': `Cette semaine, adhérence ${adh.score ?? 'non calculée'}` },
+    // L'anneau autour du compteur montre l'adhérence au programme ; un toucher déplie son détail sous les tuiles.
+    h('div', { class: 'home-top' }, hero, h('button', { class: 'card week', onclick: () => { ui.homeAdh = !ui.homeAdh; viewHome(); }, 'aria-expanded': String(!!ui.homeAdh), 'aria-label': `Cette semaine, adhérence ${adh.score ?? 'non calculée'}` },
       h('div', { class: 'sub' }, 'Cette semaine'), adherenceRing(`${weekDone}/${Object.values(prog.days).filter(Boolean).length}`, adh.score),
-      h('div', { class: 'sub' }, adh.score == null ? 'adhérence –' : `adhérence ${adh.score} %`, weekDup ? [h('br'), `dont ${weekDup} en double`] : null)))(adherence(ws, today()))),
+      h('div', { class: 'sub' }, adh.score == null ? 'adhérence –' : `adhérence ${adh.score} %`, weekDup ? [h('br'), `dont ${weekDup} en double`] : null),
+      h('div', { class: 'more' }, h('span', {}, 'Détails'), h('span', { 'aria-hidden': 'true' }, ui.homeAdh ? '⌃' : '›')))),
     // Séances déjà faites cette semaine : grisées avec le(s) jour(s), mais toujours ouvrables.
     !ui.homeMore ? null : h('div', { class: 'grid2' }, Object.keys(prog.sessions).map(n => {
       const days = weekRecs.filter(r => r.name === n).map(r => r.date).sort().map(d => JOURS[parseYmd(d).getDay()]);
       return h('a', { class: 'btn secondary' + (days.length ? ' done' : ''), href: `#/seance/${encodeURIComponent(n)}/${today()}` }, n,
         days.length ? h('small', {}, `✓ ${days.join(', ')}`) : null);
     })),
+    ui.homeAdh ? adherenceDetails(adh) : null,
     stepsCard());
 }
 
