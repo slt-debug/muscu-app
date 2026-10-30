@@ -12,6 +12,9 @@
   --good: #006300;
   --bad: #d03b3b;
   --warn: #c26a00;
+  --warn-bg: #fdf1dc;
+  --warn-ink: #7a4a00;
+  --warn-line: #e8b04a;
   --card: #ffffff;
   --field: #f0efec;
 }
@@ -27,6 +30,9 @@
     --accent: #3987e5;
     --good: #0ca30c;
     --warn: #e08a1e;
+    --warn-bg: #3a2a0c;
+    --warn-ink: #f3c46b;
+    --warn-line: #a8761f;
     --card: #1a1a19;
     --field: #262624;
   }
@@ -241,9 +247,20 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .grp-head { display: flex; justify-content: space-between; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin: 16px 2px 0; }
 .navrow .ic.ex { background: #8a5bd6; }
 .up-mark { color: var(--good); font-weight: 700; }
-/* Volet de saisie (Corps) */
-.seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--field); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
-.seg button { border: 0; background: none; padding: 8px; border-radius: 8px; font: inherit; font-weight: 600; font-size: 14px; color: var(--ink-2); cursor: pointer; }
-.seg button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+/* Sélecteur segmenté façon iOS (volet de saisie, rappel mensurations) ; .seg seul reste celui du minuteur */
+.pills { display: grid; grid-template-columns: 1fr 1fr; background: var(--field); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
+.pills.p4 { grid-template-columns: repeat(4, 1fr); }
+.pills.p7 { grid-template-columns: repeat(7, 1fr); }
+.pills button { border: 0; background: none; padding: 8px 2px; border-radius: 8px; font: inherit; font-weight: 600; font-size: 14px; color: var(--ink-2); cursor: pointer; }
+.pills button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+/* Rappel mensurations */
+.remind { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-ink); border-radius: 14px; padding: 12px 14px; margin: 12px 0; }
+.remind .sub { color: inherit; margin-top: 2px; }
+.remind .acts { display: flex; gap: 8px; margin-top: 10px; }
+.remind .acts .btn.secondary { background: transparent; border: 1px solid var(--warn-line); color: var(--warn-ink); }
+#tabs a.due::after { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn-line); margin-left: 4px; vertical-align: 6px; }
+.navrow .ic.remind-ic { background: #8a5bd6; font-weight: 700; }
+.checks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin-top: 6px; }
+.checks label { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 .sheet.entry .field span .wb { margin-left: 6px; }
 .sheet.entry .grid2 { margin-top: 10px; }

@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '29 (Withings sur l\'iPhone)';
+const APP_VERSION = '30 (rappel mensurations)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -412,6 +412,7 @@ function lineChart(series, unit) {
 let ui = { active: undefined }; // undefined = pas encore choisi, null = tout replié
 function setTab(name) {
   document.querySelectorAll('#tabs a').forEach(a => a.classList.toggle('on', a.dataset.tab === name));
+  document.querySelector('#tabs a[data-tab="corps"]')?.classList.toggle('due', remShown()); // pastille du rappel mensurations
 }
 function nextTrainingDay() {
   for (let i = 1; i <= 7; i++) {
@@ -450,6 +451,7 @@ function viewHome() {
 
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Muscu'), syncChip()),
+    remindBanner(true),
     hero,
     h('h2', {}, 'Autre séance'),
     h('div', { class: 'grid2' }, Object.keys(prog.sessions).map(n =>
@@ -812,7 +814,7 @@ function openEntrySheet(mode = 'mesures') {
   const lastOther = (k, d) => Object.values(db.body).filter(b => !b.deleted && b[k] != null && b.date !== d).sort((a, b) => b.date.localeCompare(a.date))[0];
   const close = () => wrap.remove();
   const fDate = h('input', { type: 'date', value: today() });
-  const seg = h('div', { class: 'seg' });
+  const seg = h('div', { class: 'pills' });
   const body = h('div');
   let inputs = {};
   const fill = () => {
@@ -844,7 +846,7 @@ function openEntrySheet(mode = 'mesures') {
     // Une valeur changée à la main n'est plus « Withings » ; l'import ne l'écrasera plus pour ce jour-là.
     for (const k of ['poids', 'mg']) if (vals[k] != null && vals[k] !== prev[k]) rec.src = { ...rec.src, [k]: 'manuel' };
     db.body[fDate.value] = rec;
-    save(); close(); viewBody();
+    save(); close(); render();
   } }, 'Enregistrer');
   const wrap = h('div', { class: 'sheet-wrap' },
     h('div', { class: 'dim', onclick: close }),
@@ -881,6 +883,7 @@ function viewBody() {
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Corps'),
       h('div', { class: 'row' }, h('button', { class: 'btn small tight', onclick: () => openEntrySheet() }, '+ Saisir'), syncChip())),
+    remindBanner(),
     stepsCard(),
     last ? h('div', { class: 'card' },
       h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Dernière pesée, ${fmtDate(last.date)}${last.src?.poids === 'withings' && last.withings?.at ? ' ' + fmtHour(last.withings.at) : ''}`),
@@ -1060,6 +1063,7 @@ async function syncNow(manual, forceWithings) {
       if (activity !== before) localChanged = true;
     }
     if (await pullPrograms()) localChanged = true;
+    if (await pullReminder()) localChanged = true;
     if (!wi?.stepDays) await pullActivity();
     sync.state = 'ok'; const d = new Date(); sync.at = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; sync.msg = '';
     const nS = Object.values(db.sessions).filter(r => !r.deleted).length, nB = Object.values(db.body).filter(b => !b.deleted).length;
@@ -1425,6 +1429,83 @@ function viewWithings() {
     h('p', { class: 'sub' }, 'Désactivée, plus rien n\'est importé et la saisie reste manuelle. Sans réseau, l\'import se fera à la prochaine ouverture.'));
 }
 
+// ---------- Rappel mensurations ----------
+// Réglage partagé dans reminders.json du dépôt privé : lu par le dashboard et par l'automate qui envoie
+// la notification ntfy. « Demain » ne masque le rappel que sur cet iPhone, jusqu'au lendemain.
+const RKEY = 'muscu.reminder', RSNOOZE = 'muscu.reminder.snooze';
+let reminder = load(RKEY, null);
+const remCfg = () => ({ ...REMINDER_DEFAULT, ...(reminder?.mensurations || {}) });
+const remStatus = () => reminderStatus(db.body, remCfg(), today());
+const remShown = () => remStatus().isDue && load(RSNOOZE, '') !== today();
+async function pullReminder() {
+  try {
+    const r = await ghFetch(ghUrl().replace(/[^/]+$/, 'reminders.json'), { headers: ghHeaders(), cache: 'no-store' });
+    if (!r.ok) return false; // 404 : jamais réglé, valeurs par défaut
+    const next = decodeContent(await r.json());
+    if (JSON.stringify(next) === JSON.stringify(reminder)) return false;
+    reminder = next; store(RKEY, reminder);
+    return true;
+  } catch (e) { slog(`Rappel non lu : ${e.message}`); return false; }
+}
+async function saveReminder(patch) {
+  reminder = await updateRepoJson('reminders.json', d => ({ ...d, mensurations: { ...REMINDER_DEFAULT, ...(d.mensurations || {}), ...patch, updatedAt: Date.now() } }), 'rappel');
+  store(RKEY, reminder);
+}
+function remindBanner(long) {
+  if (!remShown()) return null;
+  const s = remStatus();
+  return h('div', { class: 'remind', role: 'status' },
+    h('b', {}, '⌀ Mensurations à mettre à jour'),
+    h('div', { class: 'sub' }, s.last ? `Dernière mesure il y a ${plural(s.daysSince, 'jour')}${long ? ` (${fmtDate(s.last)}). Le matin à jeun, avant la séance.` : '.'}` : 'Aucune mensuration enregistrée pour l\'instant.'),
+    h('div', { class: 'acts' },
+      h('button', { class: 'btn small', onclick: () => openEntrySheet('mesures') }, 'Saisir'),
+      h('button', { class: 'btn small secondary', onclick: () => { store(RSNOOZE, today()); render(); } }, 'Demain')));
+}
+const remindSummary = () => { const r = remCfg(); return r.on ? `Toutes les ${r.weeks > 1 ? `${r.weeks} semaines` : 'semaines'}, le ${REMINDER_DAYS[r.day]}` : 'Désactivé'; };
+function viewReminder() {
+  setTab('set');
+  const r = remCfg(), s = remStatus();
+  const msg = h('p', { class: 'sub', role: 'status' });
+  const apply = async patch => {
+    if (!cfgOk()) { msg.textContent = 'Configure d\'abord la synchronisation GitHub.'; return; }
+    msg.textContent = 'Enregistrement…';
+    try { await saveReminder(patch); viewReminder(); } catch (e) { msg.textContent = `Échec : ${e.message}`; }
+  };
+  const pills = (cls, opts, cur, key) => h('div', { class: 'pills ' + cls },
+    opts.map(([v, t]) => h('button', { type: 'button', class: v === cur ? 'on' : '', onclick: () => v !== cur && apply({ [key]: v }) }, t)));
+  const tog = h('input', { type: 'checkbox', class: 'switch', checked: r.on, 'aria-label': 'Rappel activé' });
+  tog.addEventListener('change', () => apply({ on: tog.checked }));
+  const checks = h('div', { class: 'checks' }, MEASURES.map(m => {
+    const c = h('input', { type: 'checkbox', checked: r.measures.includes(m.key) });
+    c.addEventListener('change', () => {
+      const next = MEASURES.map(x => x.key).filter(k => k === m.key ? c.checked : r.measures.includes(k));
+      if (!next.length) { c.checked = true; msg.textContent = 'Garde au moins une mesure.'; return; }
+      apply({ measures: next });
+    });
+    return h('label', {}, c, m.short);
+  }));
+  const hour = h('select', {}, h('option', { value: '' }, 'Pas de notification'),
+    Array.from({ length: 16 }, (_, i) => i + 6).map(x => h('option', { value: String(x), selected: r.notifyHour === x }, `${x} h`)));
+  if (r.notifyHour == null) hour.value = '';
+  hour.addEventListener('change', () => apply({ notifyHour: hour.value === '' ? null : Number(hour.value) }));
+  const next = s.isDue ? 'maintenant' : fmtDateLong(s.due);
+  mount(
+    h('a', { class: 'back', href: '#/reglages' }, '‹ Réglages'),
+    h('h1', {}, 'Rappel mensurations'),
+    h('div', { class: 'card' }, h('label', { class: 'row between' }, h('b', {}, 'Rappel activé'), tog)),
+    r.on ? h('div', { class: 'card' },
+      h('div', { class: 'sub' }, 'Fréquence'),
+      pills('p4', [1, 2, 3, 4].map(w => [w, `${w} sem.`]), r.weeks, 'weeks'),
+      h('div', { class: 'sub' }, 'Jour du rappel'),
+      pills('p7', [1, 2, 3, 4, 5, 6, 0].map(d => [d, REMINDER_DAYS[d][0].toUpperCase()]), r.day, 'day'),
+      h('div', { class: 'sub' }, 'Mesures à faire'), checks,
+      h('label', { class: 'field', style: 'margin-top:14px' }, h('span', {}, 'Notification sur le téléphone (ntfy), ce jour-là'), hour)) : null,
+    msg,
+    h('div', { class: 'card sub' }, s.last ? `Dernière mesure : ${fmtDate(s.last)}` : 'Aucune mensuration enregistrée.',
+      r.on ? [h('br'), h('b', { style: 'color:var(--ink)' }, `Prochain rappel : ${next}`)] : null),
+    h('p', { class: 'sub' }, 'Le rappel apparaît en haut de Séance et de Corps, avec une pastille sur l\'onglet Corps, jusqu\'à la saisie. Si rien n\'est saisi, la notification revient chaque semaine le même jour.'));
+}
+
 function viewSettings() {
   setTab('set');
   syncEditing = false; // une modification de connexion abandonnée n'est pas reprise au retour
@@ -1435,6 +1516,7 @@ function viewSettings() {
       navRow('#/repos', timerIcon(), '', 'Minuteur de repos', restSummary()),
       navRow('#/sync', syncIcon(), 'gh', 'Synchronisation GitHub', syncSummary(), 'sync-sum'),
       navRow('#/withings', scaleIcon(), 'scale', 'Balance Withings', withingsSummary()),
+      navRow('#/rappel', '⌀', 'remind-ic', 'Rappel mensurations', remindSummary()),
       navRow('#/sauvegarde', saveIcon(), 'data', 'Sauvegarde', 'Exporter, importer')),
     standalone ? null : [h('h2', {}, 'Installer sur l\'iPhone'),
       h('p', { class: 'sub' }, 'Dans Safari : bouton Partager, puis « Sur l\'écran d\'accueil ». L\'appli s\'ouvrira ensuite en plein écran et fonctionnera sans réseau.')],
@@ -1610,6 +1692,7 @@ function render() {
     case 'sync': return viewSync();
     case 'sauvegarde': return viewBackup();
     case 'withings': return viewWithings();
+    case 'rappel': return viewReminder();
     default: return viewHome();
   }
 }
