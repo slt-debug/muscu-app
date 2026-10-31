@@ -73,6 +73,7 @@ a { color: var(--accent); }
 .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
 .duo .card { margin: 0; min-width: 0; padding: 11px 10px 9px; }
 .card.half .big { font-size: 30px; line-height: 1.1; white-space: nowrap; margin-top: 2px; }
+.card.half .tt { display: block; font-size: 16px; font-weight: 700; white-space: nowrap; } /* même taille que le titre « Poids » */
 .card.half .sub, .card.half .steps-ok { font-size: 12px; }
 .card.half .wb { padding: 0 5px; }
 .card.half .stepbars { gap: 3px; height: 64px; margin-top: 8px; }

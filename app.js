@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '53 (chiffres plus grands)';
+const APP_VERSION = '54 (titres en gras)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1527,7 +1527,7 @@ function weeklyAdherenceCard() {
   const cur = scores[7], H = 78;
   // Demi-largeur, à côté des pas : chiffre seulement sur la semaine en cours, numéros de semaine seuls.
   return h('div', { class: 'card half' },
-    h('div', { class: 'sub' }, 'Adhérence'),
+    h('b', { class: 'tt' }, 'Adhérence'),
     h('div', { class: 'big' }, cur != null ? `${cur} %` : '–'),
     cur == null ? h('div', { class: 'sub' }, 'rien de prévu')
       : h('div', { class: cur >= ADH_GOAL ? 'steps-ok' : 'sub' }, cur >= ADH_GOAL ? '✓ objectif' : `${ADH_GOAL - cur} pt${ADH_GOAL - cur > 1 ? 's' : ''} sous ${ADH_GOAL} %`),
@@ -1547,7 +1547,7 @@ function weeklyStepsCard() {
   const M = Math.max(goal * 1.25, ...avgs.map(v => v || 0)), H = 78;
   // Demi-largeur, à côté de l'adhérence : chiffre seulement sur la semaine en cours, numéros de semaine seuls.
   return h('div', { class: 'card half' },
-    h('div', { class: 'row between' }, h('span', { class: 'sub' }, 'Pas · moy./jour'), h('span', { class: 'wb', title: 'Withings' }, '⚖')),
+    h('div', { class: 'row between' }, h('b', { class: 'tt' }, 'Pas · moy./jour'), h('span', { class: 'wb', title: 'Withings' }, '⚖')),
     h('div', { class: 'big' }, cur != null ? fmtInt(cur) : '–'),
     cur == null ? h('div', { class: 'sub' }, 'aucun jour terminé')
       : h('div', { class: cur >= goal ? 'steps-ok' : 'sub' }, cur >= goal ? '✓ objectif' : `${fmtInt(goal - cur)} sous l'objectif`),
