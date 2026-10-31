@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '55 (barre des onglets fixe)';
+const APP_VERSION = '56 (période sous la courbe du poids)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1777,7 +1777,9 @@ function goalCard(title, unit, pts, target, color, fmt) {
       h('span', { class: 'sub' }, `moyenne 7 jours${ago != null ? ` · ${cur - ago > 0 ? '+' : ''}${fmt(r1(cur - ago))} en 4 sem.` : ''}`)),
     part != null ? [h('div', { class: 'track' }, h('i', { style: `width:${part}%;background:${color || 'var(--series-1)'}` })),
       h('div', { class: 'sub' }, `${part} % du chemin depuis ${fmt(start)} ${unit} · encore ${fmt(r1(Math.abs(cur - target)))} ${unit === '%' ? 'pt' : unit}`)] : null,
-    shown.length ? lineChart([{ name: 'Moyenne 7 jours', points: avgPts }, { name: 'Mesure', points: shown, raw: true, line: false }], unit, { target, color }) : h('p', { class: 'sub' }, 'Aucune mesure sur cette période.'));
+    shown.length ? lineChart([{ name: 'Moyenne 7 jours', points: avgPts }, { name: 'Mesure', points: shown, raw: true, line: false }], unit, { target, color }) : h('p', { class: 'sub' }, 'Aucune mesure sur cette période.'),
+    // Choix de la période de la courbe, sous celle-ci (il ne concerne que cette carte).
+    h('div', { class: 'pills p3', style: 'margin:6px 0 0' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))));
 }
 // Réglages › Objectifs : poids cible, pas par jour et point de départ (la masse grasse n'est plus suivie dans Objectifs).
 const goalsSummary = () => [goals?.poids != null ? `poids ${fmtKg(goals.poids)} kg` : null, `${fmtInt(stepGoal())} pas / jour`].filter(Boolean).join(' · ');
@@ -1811,7 +1813,6 @@ function viewGoals() {
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Objectifs'), syncChip()),
     h('div', { class: 'duo' }, weeklyStepsCard(), weeklyAdherenceCard()), // pas et adhérence sur la même ligne
-    h('div', { class: 'pills p3' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))),
     goalCard('Poids', 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
     strengthCard());
 }
