@@ -210,6 +210,8 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .track { height: 6px; border-radius: 3px; background: var(--field); margin: 8px 0 3px; overflow: hidden; }
 .track i { display: block; height: 100%; border-radius: 3px; }
 .pills.p3 { grid-template-columns: repeat(3, 1fr); }
+.pills.p5 { grid-template-columns: repeat(5, 1fr); }
+.pills.p5 button { padding-inline: 0; font-size: 13px; white-space: nowrap; }
 .tip { position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--axis); border-radius: 8px; padding: 6px 8px; font-size: 13px; white-space: nowrap; transform: translate(-50%, -110%); box-shadow: 0 2px 8px rgba(0,0,0,.18); }
 .legend { display: flex; gap: 14px; font-size: 13px; color: var(--ink-2); margin: 4px 4px 0; }
 .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }

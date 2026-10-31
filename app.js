@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '56 (période sous la courbe du poids)';
+const APP_VERSION = '57 (périodes 1 mois à 1 an)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1758,7 +1758,7 @@ async function saveGoals(patch) {
   goals = await updateRepoJson('goals.json', d => ({ ...d, ...patch, updatedAt: Date.now() }), 'objectifs');
   store(GKEY, goals);
 }
-const PERIODS = [['4s', '4 sem.', 28], ['3m', '3 mois', 91], ['all', 'Tout', null]];
+const PERIODS = [['1m', '1 mois', 30], ['3m', '3 mois', 91], ['6m', '6 mois', 182], ['1a', '1 an', 365], ['all', 'Tout', null]];
 // Moyenne des valeurs sur les 7 jours qui finissent à t (points {t, v}).
 const avg7 = (pts, t) => { const w = pts.filter(p => p.t <= t && p.t > t - 7 * 864e5); return w.length ? w.reduce((a, p) => a + p.v, 0) / w.length : null; };
 function goalCard(title, unit, pts, target, color, fmt) {
@@ -1768,7 +1768,7 @@ function goalCard(title, unit, pts, target, color, fmt) {
   const depart = goals?.depart || ymd(new Date(pts[0].t));
   const start = (pts.find(p => p.t >= parseYmd(depart).getTime()) || pts[0]).v;
   const part = target != null && start !== target ? Math.max(0, Math.min(100, Math.round((start - cur) / (start - target) * 100))) : null;
-  const per = PERIODS.find(p => p[0] === (ui.objPeriod || '3m'))[2];
+  const per = (PERIODS.find(p => p[0] === ui.objPeriod) || PERIODS[1])[2];
   const shown = per ? pts.filter(p => p.t > Date.now() - per * 864e5) : pts;
   const avgPts = shown.map(p => ({ t: p.t, v: r1(avg7(pts, p.t)) }));
   return h('div', { class: 'card goal' },
@@ -1779,7 +1779,7 @@ function goalCard(title, unit, pts, target, color, fmt) {
       h('div', { class: 'sub' }, `${part} % du chemin depuis ${fmt(start)} ${unit} · encore ${fmt(r1(Math.abs(cur - target)))} ${unit === '%' ? 'pt' : unit}`)] : null,
     shown.length ? lineChart([{ name: 'Moyenne 7 jours', points: avgPts }, { name: 'Mesure', points: shown, raw: true, line: false }], unit, { target, color }) : h('p', { class: 'sub' }, 'Aucune mesure sur cette période.'),
     // Choix de la période de la courbe, sous celle-ci (il ne concerne que cette carte).
-    h('div', { class: 'pills p3', style: 'margin:6px 0 0' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))));
+    h('div', { class: 'pills p5', style: 'margin:6px 0 0' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))));
 }
 // Réglages › Objectifs : poids cible, pas par jour et point de départ (la masse grasse n'est plus suivie dans Objectifs).
 const goalsSummary = () => [goals?.poids != null ? `poids ${fmtKg(goals.poids)} kg` : null, `${fmtInt(stepGoal())} pas / jour`].filter(Boolean).join(' · ');
