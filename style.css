@@ -82,6 +82,15 @@ a { color: var(--accent); }
 .card.half .stepbars { gap: 3px; height: 64px; margin-top: 8px; }
 .card.half .stepbars .col b { font-size: 10px; padding: 0 1px; }
 .card.half .stepdays { gap: 3px; font-size: 10px; }
+.card.adh-full .tt { display: block; font-size: 16px; font-weight: 700; }
+/* Données suivies : saisie manuelle (badge violet), choix de la source, saisie des pas de la veille */
+:root { --man: #6a4bc4; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --man: #b9a4f5; } }
+.wb.man { color: var(--man); background: color-mix(in srgb, var(--man) 15%, transparent); }
+.card .pills.src { margin: 10px 0 8px; }
+.step-in { display: flex; gap: 8px; margin: 8px 0 4px; }
+.step-in input { flex: 1; min-width: 0; min-height: 44px; border: 1px solid var(--grid); border-radius: 10px; background: var(--field); color: var(--ink); padding: 0 12px; }
+.stepbars .col.sel span { box-shadow: 0 0 0 2px var(--accent); }
 /* Historique : force estimée par groupe musculaire (mini-courbes) */
 .strength .str-row { display: grid; grid-template-columns: 70px 1fr 54px; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--grid); font-size: 14px; }
 .strength .sub + .str-row { border-top: 0; margin-top: 4px; }

@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '57 (périodes 1 mois à 1 an)';
+const APP_VERSION = '58 (Withings optionnel)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -1060,7 +1060,7 @@ function viewBody() {
     // Carte de la dernière pesée ; sa ligne « Saisir » déplie le formulaire de saisie juste dessous.
     h('div', { class: 'card fold' },
       last ? [h('div', { class: 'row between' }, h('span', { class: 'sub' }, `Dernière pesée, ${fmtDate(last.date)}${last.src?.poids === 'withings' && last.withings?.at ? ' ' + fmtHour(last.withings.at) : ''}`),
-        last.src?.poids === 'withings' ? h('span', { class: 'wb' }, '⚖ Withings') : null),
+        last.src?.poids === 'withings' ? h('span', { class: 'wb' }, '⚖ Withings') : srcOf('poids') === 'manuel' ? h('span', { class: 'wb man' }, '✎ Manuel') : null),
       h('div', { class: 'row', style: 'align-items:baseline;gap:18px' }, h('div', { class: 'big' }, `${fmtKg(last.poids)} kg`),
         last.mg != null ? h('div', { class: 'mid' }, `${fmtKg(last.mg)} %`) : null),
       prevW ? h('div', { class: 'sub delta ' + (last.poids <= prevW.poids ? 'up' : 'down') }, `${last.poids - prevW.poids > 0 ? '+' : ''}${fmtKg(Math.round((last.poids - prevW.poids) * 10) / 10)} kg depuis ${fmtDate(prevW.date)}`) : null]
@@ -1453,16 +1453,18 @@ async function wFetchSteps(token) {
 // manual : appui sur la pastille de synchro (ignore seulement le délai). Renvoie null s'il n'y a rien à faire.
 async function withingsFetch(force, manual) {
   if (!wConnected()) return null;
+  const wPoids = srcOf('poids') === 'withings', wPas = srcOf('pas') === 'withings';
+  if (!wPoids && !wPas) return null; // Données suivies : rien ne vient de Withings
   if (!force && wstate?.auto === false) return null;
   if (!force && !manual && Date.now() - (wauth.lastTry || 0) < W_EVERY) return null;
   wauth.lastTry = Date.now(); store(WAUTH, wauth);
   slog('Import Withings…'); sync.phase = 'withings'; refreshChips();
   try {
     const token = await wToken();
-    const days = await wFetchDays(token);
+    const days = wPoids ? await wFetchDays(token) : {};
     let steps = null, stepsError = null;
     // Pas : un échec ne fait pas échouer l'import des pesées.
-    if (hasStepsScope()) { try { steps = await wFetchSteps(token); } catch (e) { stepsError = String(e.message || e); } }
+    if (wPas && hasStepsScope()) { try { steps = await wFetchSteps(token); } catch (e) { stepsError = String(e.message || e); } }
     return { days, steps, stepsError, count: 0, stepDays: 0 };
   } catch (e) { const error = String(e.message || e); slog(error); return { error }; }
   finally { sync.phase = ''; refreshChips(); }
@@ -1519,14 +1521,15 @@ function isoWeek(d) {
 // (gris sous 85 %, vert à partir de 85 %). Semaine passée calculée sur ses 7 jours, semaine en cours à date.
 // Les semaines d'avant le début du suivi (premier programme daté ou première séance) restent vides.
 const ADH_GOAL = 85;
-function weeklyAdherenceCard() {
+function weeklyAdherenceCard(full) {
   const firsts = [...(programs?.versions || []).map(v => v.from), ...Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).map(r => r.date)].filter(Boolean).sort();
   if (!firsts.length) return null;
   const weeks = Array.from({ length: 8 }, (_, i) => addDays(weekStart(), -7 * (7 - i)));
   const scores = weeks.map((ws, i) => addDays(ws, 6) < firsts[0] ? null : adherence(ws, i === 7 ? today() : addDays(ws, 6)).score);
   const cur = scores[7], H = 78;
-  // Demi-largeur, à côté des pas : chiffre seulement sur la semaine en cours, numéros de semaine seuls.
-  return h('div', { class: 'card half' },
+  // Demi-largeur, à côté des pas (pleine largeur si les pas ne sont pas suivis) : chiffre seulement sur
+  // la semaine en cours, numéros de semaine seuls.
+  return h('div', { class: full ? 'card adh-full' : 'card half' },
     h('b', { class: 'tt' }, 'Adhérence'),
     h('div', { class: 'big' }, cur != null ? `${cur} %` : '–'),
     cur == null ? h('div', { class: 'sub' }, 'rien de prévu')
@@ -1540,14 +1543,15 @@ function weeklyAdherenceCard() {
 // hauteur = moyenne de pas par jour sur les jours terminés ; la semaine en cours est hachurée.
 function weeklyStepsCard() {
   const all = activity?.days || {}, goal = stepGoal();
-  if (!Object.keys(all).length) return null;
+  if (srcOf('pas') === 'off' || !Object.keys(all).length) return null;
   const weeks = Array.from({ length: 8 }, (_, i) => addDays(weekStart(), -7 * (7 - i)));
   const avgOf = ws => { const v = Array.from({ length: 7 }, (_, i) => addDays(ws, i)).filter(d => d < today() && all[d]).map(d => all[d].pas); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
   const avgs = weeks.map(avgOf), cur = avgs[7];
   const M = Math.max(goal * 1.25, ...avgs.map(v => v || 0)), H = 78;
   // Demi-largeur, à côté de l'adhérence : chiffre seulement sur la semaine en cours, numéros de semaine seuls.
   return h('div', { class: 'card half' },
-    h('div', { class: 'row between' }, h('b', { class: 'tt' }, 'Pas · moy./jour'), h('span', { class: 'wb', title: 'Withings' }, '⚖')),
+    h('div', { class: 'row between' }, h('b', { class: 'tt' }, 'Pas · moy./jour'),
+      srcOf('pas') === 'manuel' ? h('span', { class: 'wb man', title: 'Saisie manuelle' }, '✎') : h('span', { class: 'wb', title: 'Withings' }, '⚖')),
     h('div', { class: 'big' }, cur != null ? fmtInt(cur) : '–'),
     cur == null ? h('div', { class: 'sub' }, 'aucun jour terminé')
       : h('div', { class: cur >= goal ? 'steps-ok' : 'sub' }, cur >= goal ? '✓ objectif' : `${fmtInt(goal - cur)} sous l'objectif`),
@@ -1556,9 +1560,52 @@ function weeklyStepsCard() {
       h('i', { style: `bottom:${goal / M * H}%` })),
     h('div', { class: 'stepdays' }, weeks.map((ws, i) => h('span', { class: i === 7 ? 'today' : '' }, String(isoWeek(ws))))));
 }
+// Pas saisis à la main (Données suivies › Manuel) : ceux de la veille, journée complète. Un appui sur une barre
+// de la semaine corrige ce jour-là. Écrits dans activity.json comme ceux de Withings, avec src: 'manuel'.
+let stepMsg = '';
+function manualStepsCard() {
+  const all = activity?.days || {}, goal = stepGoal(), yest = addDays(today(), -1);
+  const day = ui.stepDay && ui.stepDay < today() ? ui.stepDay : yest, v = all[day]?.pas;
+  const week = Array.from({ length: 7 }, (_, i) => addDays(weekStart(), i));
+  const M = Math.max(goal * 1.25, ...week.map(d => all[d]?.pas || 0)), H = 78;
+  const inp = h('input', { type: 'text', inputmode: 'numeric', placeholder: v != null ? fmtInt(v) : 'ex. 8 432', 'aria-label': `Pas du ${fmtDate(day)}` });
+  const save = async () => {
+    const n = num(inp.value.replace(/\s/g, ''));
+    if (n == null || n < 0 || n > 150000) { stepMsg = 'Indique un nombre de pas.'; return viewHome(); }
+    const rec = { pas: Math.round(n), src: 'manuel', at: Date.now() };
+    stepMsg = 'Enregistrement…'; viewHome();
+    try {
+      // Sans synchro GitHub, les pas restent sur cet iPhone.
+      activity = cfgOk() ? await updateRepoJson('activity.json', d => ({ ...d, days: { ...(d.days || {}), [day]: rec }, updatedAt: Date.now() }), 'pas')
+        : { ...activity, days: { ...all, [day]: rec } };
+      store(AKEY, activity); ui.stepDay = null; stepMsg = '';
+    } catch (e) { stepMsg = `Non enregistré : ${e.message}`; }
+    viewHome();
+  };
+  const col = d => {
+    const x = d < today() ? all[d]?.pas : null;
+    const attrs = d < today() ? { onclick: () => { ui.stepDay = d; stepMsg = ''; viewHome(); } } : {};
+    const sel = d === day ? ' sel' : '';
+    if (x == null) return h('div', { class: 'col empty' + sel, ...attrs }, h('span'));
+    return h('div', { class: 'col' + (x >= goal ? ' ok' : '') + sel, ...attrs }, h('b', {}, fmtK(x)), h('span', { style: `height:${Math.max(3, x / M * H)}%` }));
+  };
+  const editing = v == null || !!ui.stepDay;
+  return h('div', { class: 'card' },
+    h('div', { class: 'row between' }, h('span', { class: 'sub' }, day === yest ? `Pas d'hier, ${JOURS[parseYmd(day).getDay()]}` : `Pas du ${fmtDateLong(day)}`), h('span', { class: 'wb man' }, '✎ Manuel')),
+    h('div', { class: 'row', style: 'align-items:baseline;gap:12px' }, h('div', { class: 'big' }, v != null ? fmtInt(v) : '–'),
+      v == null ? h('span', { class: 'sub' }, 'pas encore saisis')
+        : h('span', { class: v >= goal ? 'steps-ok' : 'sub' }, v >= goal ? '✓ objectif atteint' : `${fmtInt(goal - v)} sous l'objectif`)),
+    editing ? [h('form', { class: 'step-in', onsubmit: e => { e.preventDefault(); save(); } }, inp, h('button', { class: 'btn small' }, 'OK')),
+      h('div', { class: 'sub' }, stepMsg || 'Le chiffre est dans l\'app Santé de l\'iPhone (Parcourir › Activité › Pas).')] : null,
+    h('div', { class: 'stepbars' }, week.map(col), h('i', { style: `bottom:${goal / M * H}%` })),
+    h('div', { class: 'stepdays' }, week.map((d, i) => h('span', { class: d === day ? 'today' : '' }, ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'][i]))));
+}
 // Carte des pas de la page Séance : le jour en cours (partiel, mis à jour à chaque import Withings), puis la semaine
 // du lundi au dimanche avec le nombre de pas en milliers sur chaque barre (jour en cours hachuré, jours à venir vides).
 function stepsCard() {
+  const mode = srcOf('pas');
+  if (mode === 'off') return null;
+  if (mode === 'manuel') return manualStepsCard();
   const all = activity?.days || {};
   if (!Object.keys(all).length) return null;
   const t = all[today()]?.pas, y = all[ymd(new Date(Date.now() - 864e5))]?.pas;
@@ -1593,13 +1640,13 @@ const lastWithings = () => Object.values(db.body).filter(b => !b.deleted && b.wi
 const whenTxt = ms => `${fmtDate(ymd(new Date(ms)))} ${fmtHour(ms)}`;
 function withingsSummary() {
   if (!wConnected()) return 'Non connectée';
-  if (wstate.auto === false) return 'Désactivée · saisie manuelle';
+  if (wstate?.auto === false) return 'Désactivée · saisie manuelle';
   const l = lastWithings();
   return `Automatique${l ? ` · dernière pesée ${whenTxt(l.withings.at)}` : ''}`;
 }
 function viewWithings() {
   setTab('set');
-  const head = [h('div', { class: 'row between' }, h('a', { href: '#/reglages' }, '‹ Réglages'), syncChip()), h('h1', {}, 'Balance Withings')];
+  const head = [h('div', { class: 'row between' }, h('a', { href: '#/sources' }, '‹ Données suivies'), syncChip()), h('h1', {}, 'Balance Withings')];
   const note = wMsg ? h('p', { class: 'sub', role: 'status' }, wMsg) : null;
   if (!wConnected()) {
     const field = (label, inp) => h('label', { class: 'field' }, h('span', {}, label), inp);
@@ -1758,6 +1805,51 @@ async function saveGoals(patch) {
   goals = await updateRepoJson('goals.json', d => ({ ...d, ...patch, updatedAt: Date.now() }), 'objectifs');
   store(GKEY, goals);
 }
+
+// ---------- Données suivies ----------
+// Origine du poids et des pas, partagée dans goals.json (sources). Sans réglage : tout vient de Withings
+// si la balance est connectée, sinon poids saisi à la main et pas non suivis.
+const SRC_LABEL = { withings: 'Withings', manuel: 'manuel', off: 'non suivis' };
+function srcOf(k) {
+  const v = goals?.sources?.[k];
+  if (v) return v;
+  return wConnected() || wstate?.connected ? 'withings' : k === 'pas' ? 'off' : 'manuel';
+}
+const sourcesSummary = () => `Poids : ${SRC_LABEL[srcOf('poids')]} · Pas : ${SRC_LABEL[srcOf('pas')]}`;
+function viewSources() {
+  setTab('set');
+  const msg = h('p', { class: 'sub', role: 'status' });
+  const apply = async (k, v) => {
+    if (!cfgOk()) { msg.textContent = 'Configure d\'abord la synchronisation GitHub.'; return; }
+    msg.textContent = 'Enregistrement…';
+    try {
+      await saveGoals({ sources: { poids: srcOf('poids'), pas: srcOf('pas'), [k]: v } });
+      viewSources();
+      if (v === 'withings' && wConnected()) syncNow(false, true); // premier import de la donnée choisie
+    } catch (e) { msg.textContent = `Échec : ${e.message}`; }
+  };
+  const pills = (k, opts) => h('div', { class: `pills src p${opts.length}` },
+    opts.map(([v, t]) => h('button', { type: 'button', class: srcOf(k) === v ? 'on' : '', onclick: () => srcOf(k) !== v && apply(k, v) }, t)));
+  const needW = srcOf('poids') === 'withings' || srcOf('pas') === 'withings';
+  mount(
+    h('a', { class: 'back', href: '#/reglages' }, '‹ Réglages'),
+    h('h1', {}, 'Données suivies'),
+    h('div', { class: 'card' }, h('b', {}, 'Poids et masse grasse'),
+      pills('poids', [['withings', '⚖ Balance Withings'], ['manuel', '✎ Saisie manuelle']]),
+      h('div', { class: 'sub' }, srcOf('poids') === 'withings'
+        ? 'Chaque pesée de la balance est importée à l\'ouverture de l\'appli. Une correction reste possible dans Corps › Saisir.'
+        : 'Tu saisis ta pesée dans Corps › Saisir. La courbe utilise la moyenne sur 7 jours, même avec une pesée par semaine.')),
+    h('div', { class: 'card' }, h('b', {}, 'Pas quotidiens'),
+      pills('pas', [['withings', '⚖ Withings'], ['manuel', '✎ Manuel'], ['off', 'Non suivis']]),
+      h('div', { class: 'sub' }, {
+        withings: 'Importés de Withings à chaque ouverture de l\'appli.',
+        manuel: 'Tu saisis les pas de la veille dans la carte Pas de la page Séance.',
+        off: 'Les cartes de pas disparaissent et l\'objectif de pas n\'est plus demandé.',
+      }[srcOf('pas')])),
+    msg,
+    h('div', { class: 'navlist' }, navRow('#/withings', scaleIcon(), 'scale', 'Balance Withings',
+      needW ? withingsSummary() : `${withingsSummary()} · inutile avec ces choix`)));
+}
 const PERIODS = [['1m', '1 mois', 30], ['3m', '3 mois', 91], ['6m', '6 mois', 182], ['1a', '1 an', 365], ['all', 'Tout', null]];
 // Moyenne des valeurs sur les 7 jours qui finissent à t (points {t, v}).
 const avg7 = (pts, t) => { const w = pts.filter(p => p.t <= t && p.t > t - 7 * 864e5); return w.length ? w.reduce((a, p) => a + p.v, 0) / w.length : null; };
@@ -1782,7 +1874,7 @@ function goalCard(title, unit, pts, target, color, fmt) {
     h('div', { class: 'pills p5', style: 'margin:6px 0 0' }, PERIODS.map(([k, t]) => h('button', { type: 'button', class: (ui.objPeriod || '3m') === k ? 'on' : '', onclick: () => { ui.objPeriod = k; viewGoals(); } }, t))));
 }
 // Réglages › Objectifs : poids cible, pas par jour et point de départ (la masse grasse n'est plus suivie dans Objectifs).
-const goalsSummary = () => [goals?.poids != null ? `poids ${fmtKg(goals.poids)} kg` : null, `${fmtInt(stepGoal())} pas / jour`].filter(Boolean).join(' · ');
+const goalsSummary = () => [goals?.poids != null ? `poids ${fmtKg(goals.poids)} kg` : null, srcOf('pas') !== 'off' ? `${fmtInt(stepGoal())} pas / jour` : null].filter(Boolean).join(' · ');
 function viewGoalSettings() {
   setTab('set');
   const g = goals || {};
@@ -1795,14 +1887,14 @@ function viewGoalSettings() {
     h('a', { class: 'back', href: '#/reglages' }, '‹ Réglages'),
     h('h1', {}, 'Objectifs'),
     h('div', { class: 'card entry' },
-      h('div', { class: 'grid2' }, fP, fS),
+      h('div', { class: 'grid2' }, fP, srcOf('pas') !== 'off' ? fS : null), // pas non suivis : pas d'objectif de pas
       h('label', { class: 'field' }, h('span', {}, 'Point de départ'), iD),
       h('p', { class: 'sub' }, 'Le point de départ sert à calculer la part du chemin faite vers le poids cible. Un objectif de poids laissé vide n\'est pas affiché.'),
       msg,
       h('button', { class: 'btn', onclick: async () => {
         if (!cfgOk()) { msg.textContent = 'Configure d\'abord la synchronisation GitHub.'; return; }
         msg.textContent = 'Enregistrement…';
-        try { await saveGoals({ poids: num(iP.value), pas: num(iS.value) ? Math.round(num(iS.value)) : null, depart: iD.value || null }); msg.textContent = 'Objectifs enregistrés.'; }
+        try { await saveGoals({ poids: num(iP.value), pas: srcOf('pas') === 'off' ? (g.pas ?? null) : num(iS.value) ? Math.round(num(iS.value)) : null, depart: iD.value || null }); msg.textContent = 'Objectifs enregistrés.'; }
         catch (e) { msg.textContent = `Échec : ${e.message}`; }
       } }, 'Enregistrer')));
 }
@@ -1812,8 +1904,9 @@ function viewGoals() {
   const pts = key => list.filter(b => b[key] != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b[key] }));
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Objectifs'), syncChip()),
-    h('div', { class: 'duo' }, weeklyStepsCard(), weeklyAdherenceCard()), // pas et adhérence sur la même ligne
-    goalCard('Poids', 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
+    // Pas et adhérence sur la même ligne ; sans pas, l'adhérence prend toute la largeur.
+    (ws => ws ? h('div', { class: 'duo' }, ws, weeklyAdherenceCard()) : weeklyAdherenceCard(true))(weeklyStepsCard()),
+    goalCard(['Poids', srcOf('poids') === 'manuel' ? h('span', { class: 'wb man', style: 'margin-left:8px' }, '✎ Manuel') : null], 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
     strengthCard());
 }
 
@@ -1826,7 +1919,7 @@ function viewSettings() {
     h('div', { class: 'navlist' },
       navRow('#/repos', timerIcon(), '', 'Minuteur de repos', restSummary()),
       navRow('#/sync', syncIcon(), 'gh', 'Synchronisation GitHub', syncSummary(), 'sync-sum'),
-      navRow('#/withings', scaleIcon(), 'scale', 'Balance Withings', withingsSummary()),
+      navRow('#/sources', scaleIcon(), 'scale', 'Données suivies', sourcesSummary()),
       navRow('#/rappel', '⌀', 'remind-ic', 'Rappel mensurations', remindSummary()),
       navRow('#/cibles', '◎', 'goal-ic', 'Objectifs', goalsSummary()),
       navRow('#/sauvegarde', saveIcon(), 'data', 'Sauvegarde', 'Exporter, importer')),
@@ -2003,6 +2096,7 @@ function render() {
     case 'repos': return viewRest();
     case 'sync': return viewSync();
     case 'sauvegarde': return viewBackup();
+    case 'sources': return viewSources();
     case 'withings': return viewWithings();
     case 'rappel': return viewReminder();
     case 'objectifs': return viewGoals();
@@ -2026,7 +2120,8 @@ const MAIN_PAGES = ['#/objectifs', '#/', '#/historique', '#/corps', '#/reglages'
 function parentPage(hash) {
   if (hash.startsWith('#/historique/')) return '#/historique';
   if (hash.startsWith('#/ex/')) return exFrom.startsWith('#/seance/') ? exFrom : '#/historique/exercices';
-  if (['#/repos', '#/sync', '#/sauvegarde', '#/withings', '#/rappel', '#/cibles'].includes(hash)) return '#/reglages';
+  if (hash === '#/withings') return '#/sources';
+  if (['#/repos', '#/sync', '#/sauvegarde', '#/sources', '#/rappel', '#/cibles'].includes(hash)) return '#/reglages';
   return null;
 }
 function swipeTarget(dir) { // dir = 1 : balayage vers la gauche (suivante), -1 : vers la droite
