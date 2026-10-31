@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '59 (fusion par exercice)';
+const APP_VERSION = '60 (contrôles et premier lancement)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -109,14 +109,18 @@ function suggest(ex, excludeId) {
 
 // ---------- Séances ----------
 function sessionId(date, name) { return `${date}_${name}`; }
+// Fiche de la séance à modifier ; une séance supprimée repart de zéro (ses anciennes séries ne reviennent pas).
+function sessionRec(date, name) {
+  const id = sessionId(date, name), cur = db.sessions[id];
+  return cur && !cur.deleted ? cur : (db.sessions[id] = { id, date, name, entries: {} });
+}
 function entryFor(ex, rec, sug) {
   const entry = rec?.entries?.[ex.id];
   if (entry) return entry;
   return { sets: Array.from({ length: ex.sets }, () => ({ kg: sug.kg, reps: sug.reps, rir: '', done: false })) };
 }
 function commit(date, name, ex, entry) {
-  const id = sessionId(date, name);
-  const rec = db.sessions[id] || (db.sessions[id] = { id, date, name, entries: {} });
+  const rec = sessionRec(date, name);
   rec.entries[ex.id] = entry;
   entry.u = Date.now(); // heure de modification de l'exercice, pour la fusion (merge.js)
   rec.updatedAt = Date.now();
@@ -167,8 +171,7 @@ function fmtMin(ms) {
 }
 const fmtHour = t => { const d = new Date(t); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 function editClock(date, name, fn) {
-  const id = sessionId(date, name);
-  const rec = db.sessions[id] || (db.sessions[id] = { id, date, name, entries: {} });
+  const rec = sessionRec(date, name);
   rec.clock = rec.clock || { start: null, end: null, pauseMs: 0, pausedAt: null };
   fn(rec.clock, Date.now());
   rec.clockU = rec.updatedAt = Date.now();
@@ -551,7 +554,7 @@ function viewSession(name, date) {
   const id = sessionId(date, name);
   // Exercices du programme actif à la date de la séance, plus ceux déjà saisis qui n'y sont plus (séance commencée avant un changement).
   const planned = programFor(date).sessions[name] || [];
-  const rec = db.sessions[id];
+  const rec = db.sessions[id]?.deleted ? undefined : db.sessions[id]; // séance supprimée : page vierge
   // Remplacements pour cette séance (rec.swaps = { prévu: remplaçant }) : le remplaçant garde le nombre de séries prévu
   // (moins celles déjà faites sur l'exercice prévu) avec sa propre fourchette et son propre repos.
   const list = [];
@@ -606,12 +609,16 @@ function viewSession(name, date) {
         }
       };
       markDiff();
+      // Validation refusée (charge ou reps manquantes) : la case vide passe en rouge, un message dit quoi faire.
+      const warn = h('div', { class: 'set-warn', role: 'alert', hidden: true });
+      const clearWarn = () => { if (num(kgIn.value) != null) kgIn.classList.remove('err'); if (num(repIn.value) > 0) repIn.classList.remove('err'); if (!kgIn.matches('.err') && !repIn.matches('.err')) warn.hidden = true; };
+      kgIn.addEventListener('input', clearWarn); repIn.addEventListener('input', clearWarn);
       kgIn.addEventListener('change', () => { st.kg = num(kgIn.value); save1(); markDiff(); });
       repIn.addEventListener('change', () => { st.reps = num(repIn.value); save1(); markDiff(); });
       const bump = (input, key, delta, min) => () => {
         const cur = num(input.value) ?? (key === 'kg' ? (ex.kg ?? 0) : 0);
         const nv = Math.max(min, Math.round((cur + delta) * 100) / 100);
-        st[key] = nv; input.value = key === 'kg' ? fmtKg(nv) : String(nv); save1(); markDiff();
+        st[key] = nv; input.value = key === 'kg' ? fmtKg(nv) : String(nv); save1(); markDiff(); clearWarn();
       };
       const rir = h('select', { class: 'rir', 'aria-label': 'Répétitions en réserve' },
         ['', '0', '1', '2', '3', '4'].map(v => h('option', { value: v, selected: String(st.rir) === v }, v === '' ? '–' : v)));
@@ -619,7 +626,14 @@ function viewSession(name, date) {
       const chk = h('button', { class: 'check' + (st.done ? ' on' : ''), 'aria-label': 'Série faite', onclick: () => {
         st.kg = num(kgIn.value); st.reps = num(repIn.value);
         st.done = !st.done;
-        if (st.done && !(st.reps > 0 && st.kg != null)) { st.done = false; return; }
+        if (st.done && !(st.reps > 0 && st.kg != null)) {
+          st.done = false;
+          kgIn.classList.toggle('err', st.kg == null); repIn.classList.toggle('err', !(st.reps > 0));
+          warn.textContent = st.kg == null ? 'Indique la charge avant de valider (0 si c\'est au poids du corps).' : 'Indique le nombre de reps avant de valider.';
+          warn.hidden = false;
+          (st.kg == null ? kgIn : repIn).focus();
+          return;
+        }
         if (st.done) st.t = Date.now(); else delete st.t;
         commit(date, name, ex, entry);
         if (st.done) {
@@ -643,7 +657,7 @@ function viewSession(name, date) {
         h('span', { class: 'n' }, i + 1),
         h('div', { class: 'stepper' }, h('button', { onclick: bump(kgIn, 'kg', -ex.step, 0) }, '−'), h('div', { class: 'val' }, kgIn, dKg), h('button', { onclick: bump(kgIn, 'kg', ex.step, 0) }, '+')),
         h('div', { class: 'stepper' }, h('button', { onclick: bump(repIn, 'reps', -1, 0) }, '−'), h('div', { class: 'val' }, repIn, dReps), h('button', { onclick: bump(repIn, 'reps', 1, 0) }, '+')),
-        rir, chk));
+        rir, chk), warn);
     });
     // Jugement de la charge : une seule flèche cochée à la fois, on la décoche en la touchant de nouveau. Aucun effet sur les charges proposées.
     const mark = kind => () => { entry.load = entry.load === kind ? null : kind; commit(date, name, ex, entry); redraw(); };
@@ -707,7 +721,29 @@ function viewSession(name, date) {
       h('div', { class: 'sub' }, `${fmtMin(sessionDuration(rec))} · ${done} série${done > 1 ? 's' : ''} · ${fmtHour(c.start)} → ${fmtHour(c.end)}`),
       h('div', { style: 'height:10px' }),
       h('a', { class: 'btn secondary', href: '#/' }, 'Retour à l\'accueil')) : null,
-    recordsCard(list, prs, ex => { ui.active = ex.id; redraw(); document.querySelector(`[data-ex="${ex.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
+    recordsCard(list, prs, ex => { ui.active = ex.id; redraw(); document.querySelector(`[data-ex="${ex.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }),
+    // Suppression de la séance (confirmation dans un volet) : seulement s'il y a quelque chose à supprimer.
+    rec && (done || rec.clock?.start || Object.values(rec.entries || {}).some(e => e.comment))
+      ? h('button', { class: 'linkbtn danger del-sess', onclick: () => confirmDeleteSession(rec) }, 'Supprimer cette séance') : null);
+}
+function confirmDeleteSession(rec) {
+  if (document.querySelector('.sheet-wrap')) return;
+  const close = () => wrap.remove();
+  const n = setsDone(rec), nc = Object.values(rec.entries || {}).filter(e => e.comment).length;
+  const lost = [n ? `${n} série${n > 1 ? 's' : ''} validée${n > 1 ? 's' : ''}` : null, nc ? plural(nc, 'commentaire') : null, rec.clock?.start ? 'la durée' : null].filter(Boolean);
+  const wrap = h('div', { class: 'sheet-wrap' },
+    h('div', { class: 'dim', onclick: close }),
+    h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Supprimer la séance' },
+      h('span', { class: 'grab', 'aria-hidden': 'true' }),
+      h('h2', { style: 'margin:4px 0 2px' }, `Supprimer ${rec.name} du ${fmtDateLong(rec.date)} ?`),
+      h('p', { class: 'sub' }, `${lost.length ? `Effacé : ${lost.join(', ').replace(/, ([^,]*)$/, ' et $1')}. ` : ''}La suppression vaut aussi sur GitHub et sur le dashboard.`),
+      h('button', { class: 'btn danger-fill', onclick: () => {
+        rec.deleted = true; rec.updatedAt = Date.now();
+        if (timer?.sid === rec.id) stopTimer();
+        close(); save(); go('#/');
+      } }, 'Supprimer la séance'),
+      h('button', { class: 'btn secondary', onclick: close }, 'Annuler')));
+  document.body.append(wrap);
 }
 
 // ---------- Records personnels ----------
@@ -768,8 +804,7 @@ function openFiche(ex, sessionRecId) {
 
 // Remplacement pour une seule séance : les séries déjà faites restent sur l'exercice prévu, les autres passent au remplaçant.
 function swapExercise(date, name, ex, toId) {
-  const id = sessionId(date, name);
-  const rec = db.sessions[id] || (db.sessions[id] = { id, date, name, entries: {} });
+  const rec = sessionRec(date, name);
   const done = doneSets(rec.entries[ex.id]), now = Date.now();
   if (done.length) Object.assign(rec.entries[ex.id], { sets: rec.entries[ex.id].sets.filter(x => done.includes(x)), u: now });
   else if (rec.entries[ex.id]) { delete rec.entries[ex.id]; rec.removed = { ...rec.removed, [ex.id]: now }; }
@@ -1000,17 +1035,22 @@ function entryForm(mode) {
   const fDate = h('input', { type: 'date', value: today() });
   const seg = h('div', { class: 'pills' });
   const body = h('div');
-  let inputs = {};
+  const msg = h('div', { class: 'form-msg', role: 'alert', hidden: true });
+  const say = (text, kind) => { msg.textContent = text; msg.className = 'form-msg ' + kind; msg.hidden = !text; };
+  let inputs = {}, cleared = {};
   const fill = () => {
     seg.replaceChildren(...[['mesures', 'Mensurations'], ['poids', 'Poids / MG']].map(([m, t]) =>
       h('button', { type: 'button', class: m === mode ? 'on' : '', onclick: () => { mode = ui.bodyEntry = m; fill(); } }, t)));
     const e = existing(fDate.value), refDates = new Set();
-    inputs = {};
+    inputs = {}; cleared = {}; say('');
     const fields = (mode === 'mesures' ? MEASURES.map(m => m.key) : ['poids', 'mg']).map(k => {
       const ref = lastOther(k, fDate.value);
       if (ref && e?.[k] == null) refDates.add(ref.date);
-      inputs[k] = h('input', { type: 'text', inputmode: 'decimal', value: e?.[k] != null ? fmtKg(e[k]) : '', placeholder: ref ? fmtKg(ref[k]) : unit(k) });
-      return h('label', { class: 'field' }, h('span', {}, label[k], e?.src?.[k] === 'withings' ? h('span', { class: 'wb' }, '⚖') : null), inputs[k]);
+      const inp = inputs[k] = h('input', { type: 'text', inputmode: 'decimal', value: e?.[k] != null ? fmtKg(e[k]) : '', placeholder: ref ? fmtKg(ref[k]) : unit(k) });
+      inp.addEventListener('input', () => { inp.classList.remove('err'); delete cleared[k]; });
+      // ✕ : efface une valeur déjà enregistrée ce jour-là (saisie par erreur).
+      const x = e?.[k] != null ? h('button', { type: 'button', class: 'clear-x', 'aria-label': `Effacer ${label[k]}`, onclick: () => { inp.value = ''; cleared[k] = true; inp.focus(); } }, '✕') : null;
+      return h('label', { class: 'field' }, h('span', {}, label[k], e?.src?.[k] === 'withings' ? h('span', { class: 'wb' }, '⚖') : null), h('div', { class: 'in-x' }, inp, x));
     });
     body.replaceChildren(...[h('div', { class: 'grid2' }, fields),
       refDates.size ? h('p', { class: 'sub' }, `En gris : dernière valeur (${[...refDates].sort().map(fmtDate).join(', ')}), pour comparer.`) : null,
@@ -1021,19 +1061,36 @@ function entryForm(mode) {
   };
   fDate.addEventListener('change', fill);
   fill();
+  // Limites de vraisemblance : au-delà, c'est presque toujours une faute de frappe.
+  const LIMITS = { poids: [30, 300], mg: [3, 60], ...Object.fromEntries(MEASURES.map(m => [m.key, [10, 200]])) };
+  const short = { poids: 'Poids', mg: 'Masse grasse', ...Object.fromEntries(MEASURES.map(m => [m.key, m.short])) };
   const ok = h('button', { class: 'btn', style: 'margin-top:10px', onclick: () => {
-    const vals = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, num(i.value)]));
-    if (!fDate.value || Object.values(vals).every(v => v == null)) return;
+    if (!fDate.value) { say('Choisis une date.', 'warn'); return; }
+    const raw = Object.entries(inputs).map(([k, i]) => [k, i.value.trim(), num(i.value)]);
+    const bad = raw.filter(([k, t, v]) => t && (v == null || v < LIMITS[k][0] || v > LIMITS[k][1]));
+    if (bad.length) {
+      bad.forEach(([k]) => inputs[k].classList.add('err'));
+      const [k, t] = bad[0];
+      say(`${short[k]} : ${t} ${unit(k)} semble faux (entre ${LIMITS[k][0]} et ${LIMITS[k][1]}).`, 'bad');
+      return;
+    }
+    const vals = Object.fromEntries(raw.map(([k, , v]) => [k, v]));
+    if (Object.values(vals).every(v => v == null) && !Object.keys(cleared).length) {
+      say(mode === 'mesures' ? 'Saisis au moins une mesure (les valeurs grises sont les précédentes, pour comparer).' : 'Saisis au moins le poids ou la masse grasse.', 'warn');
+      return;
+    }
     const prev = existing(fDate.value) || {};
-    const rec = { ...prev, id: fDate.value, date: fDate.value, updatedAt: Date.now() };
-    for (const [k, v] of Object.entries(vals)) rec[k] = v ?? prev[k] ?? null;
-    // Une valeur changée à la main n'est plus « Withings » ; l'import ne l'écrasera plus pour ce jour-là.
-    for (const k of ['poids', 'mg']) if (vals[k] != null && vals[k] !== prev[k]) rec.src = { ...rec.src, [k]: 'manuel' };
+    const rec = { ...prev, id: fDate.value, date: fDate.value, deleted: false, updatedAt: Date.now() };
+    for (const [k, v] of Object.entries(vals)) rec[k] = cleared[k] ? null : v ?? prev[k] ?? null;
+    // Une valeur changée ou effacée à la main n'est plus « Withings » ; l'import ne l'écrasera plus pour ce jour-là.
+    for (const k of ['poids', 'mg']) if (cleared[k] || (vals[k] != null && vals[k] !== prev[k])) rec.src = { ...rec.src, [k]: 'manuel' };
+    // Plus aucune valeur ce jour-là : la fiche est supprimée.
+    if (['poids', 'mg', ...MEASURES.map(m => m.key)].every(k => rec[k] == null)) rec.deleted = true;
     db.body[fDate.value] = rec;
     ui.bodyEntry = null; save(); render();
   } }, 'Enregistrer');
   return h('div', { class: 'card entry', role: 'group', 'aria-label': 'Saisir une mesure' },
-    seg, h('label', { class: 'field' }, h('span', {}, 'Date'), fDate), body, ok);
+    seg, h('label', { class: 'field' }, h('span', {}, 'Date'), fDate), body, msg, ok);
 }
 
 function viewBody() {
@@ -1141,26 +1198,29 @@ function scheduleSync() {
 const ghUrl = () => `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.path}`;
 const ghHeaders = () => ({ Authorization: `Bearer ${cfg.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' });
 // fetch avec délai maximum : sans lui, une requête bloquée laisserait la synchro « en cours » indéfiniment.
-async function ghFetch(url, opt) {
-  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 15000);
+// data.json grossit avec les années (0,9 Mo pour 2 ans, environ 10 s en 4G) : ses lectures et écritures ont 60 s,
+// les petits fichiers 15 s.
+const BIG_MS = 60000;
+async function ghFetch(url, opt, ms = 15000) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
   try { return await fetch(url, { ...opt, signal: ctl.signal }); }
-  catch (e) { throw new Error(e.name === 'AbortError' ? 'délai dépassé (15 s sans réponse de GitHub)' : e.message); }
+  catch (e) { throw new Error(e.name === 'AbortError' ? `délai dépassé (${ms / 1000} s sans réponse de GitHub)` : e.message); }
   finally { clearTimeout(t); }
 }
 async function ghGet() {
   slog('Lecture du fichier sur GitHub…');
-  const r = await ghFetch(ghUrl(), { headers: ghHeaders(), cache: 'no-store' });
+  const r = await ghFetch(ghUrl(), { headers: ghHeaders(), cache: 'no-store' }, BIG_MS);
   slog(`Lecture : réponse ${r.status}`);
   if (r.status === 404) return { sha: null, data: null };
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
   const j = await r.json();
-  return { sha: j.sha, data: await ghContent(ghUrl(), j) };
+  return { sha: j.sha, data: await ghContent(ghUrl(), j, BIG_MS) };
 }
 // Contenu d'un fichier du dépôt. Au-delà de 1 Mo, GitHub renvoie un contenu vide (encoding « none ») :
 // on le redemande alors au format brut, qui va jusqu'à 100 Mo.
-async function ghContent(url, j) {
+async function ghContent(url, j, ms) {
   if (j.encoding !== 'none' && j.content) return decodeContent(j);
-  const r = await ghFetch(url, { headers: { ...ghHeaders(), Accept: 'application/vnd.github.raw+json' }, cache: 'no-store' });
+  const r = await ghFetch(url, { headers: { ...ghHeaders(), Accept: 'application/vnd.github.raw+json' }, cache: 'no-store' }, ms);
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
   return JSON.parse(await r.text());
 }
@@ -1169,7 +1229,7 @@ async function ghPut(data, sha) {
   const body = { message: `sync ${new Date().toISOString()}`, content: btoa(unescape(encodeURIComponent(JSON.stringify(data)))) };
   if (sha) body.sha = sha;
   slog('Envoi des données vers GitHub…');
-  const r = await ghFetch(ghUrl(), { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) });
+  const r = await ghFetch(ghUrl(), { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) }, BIG_MS);
   slog(`Envoi : réponse ${r.status}`);
   if (r.status === 409 || r.status === 422) { const e = new Error('conflit'); e.conflict = true; throw e; }
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
@@ -1197,8 +1257,8 @@ async function syncNow(manual, forceWithings) {
   const isManual = manual === true;
   slog(isManual ? 'Appui sur « Synchroniser maintenant »' : 'Synchro automatique');
   if (!cfgOk()) { slog(`Annulé : il manque ${missingFields().join(', ')}`); sync.state = 'off'; if (isManual) go('#/sync'); return; }
-  // Une synchro bloquée depuis plus de 20 s ne doit pas empêcher les suivantes.
-  if (syncing && Date.now() - syncStartedAt < 20000) { slog('Une synchro est déjà en cours, appui ignoré'); return; }
+  // Une synchro bloquée depuis plus de 3 min ne doit pas empêcher les suivantes (lecture et envoi de data.json : 60 s chacun au plus).
+  if (syncing && Date.now() - syncStartedAt < 180000) { slog('Une synchro est déjà en cours, appui ignoré'); return; }
   if (!navigator.onLine) { slog('Annulé : le téléphone indique « hors ligne »'); if (isManual) { sync.state = 'err'; sync.msg = 'hors ligne'; refreshChips(); } return; }
   syncing = true; syncStartedAt = Date.now(); sync.state = 'busy'; refreshChips();
   let localChanged = false;
@@ -1239,7 +1299,8 @@ async function syncNow(manual, forceWithings) {
   // Des données distantes sont arrivées : on redessine les vues de lecture (pas la séance en cours de saisie).
   // (la page Exercices garde sa recherche en cours : pas de redessin.)
   // (Corps n'est pas redessiné pendant une saisie dépliée : les champs en cours seraient perdus.)
-  const readOnlyView = ['', '#/', '#/historique', '#/historique/seances'].includes(location.hash) || (location.hash === '#/corps' && !ui.bodyEntry)
+  // (Réglages aussi : ses résumés d'objectifs et de données suivies dépendent des fichiers reçus.)
+  const readOnlyView = ['', '#/', '#/historique', '#/historique/seances', '#/reglages'].includes(location.hash) || (location.hash === '#/corps' && !ui.bodyEntry)
     || location.hash === '#/objectifs' || location.hash.startsWith('#/ex/');
   if (localChanged && readOnlyView) render();
   if (location.hash === '#/withings' && wConnected()) render(); // résultat de l'import
@@ -1699,7 +1760,8 @@ const RKEY = 'muscu.reminder', RSNOOZE = 'muscu.reminder.snooze';
 let reminder = load(RKEY, null);
 const remCfg = () => ({ ...REMINDER_DEFAULT, ...(reminder?.mensurations || {}) });
 const remStatus = () => reminderStatus(db.body, remCfg(), today());
-const remShown = () => remStatus().isDue && load(RSNOOZE, '') !== today();
+// Pas de bandeau avant la toute première mesure : c'est la carte « Bien démarrer » (page Objectifs) qui y invite.
+const remShown = () => remStatus().isDue && !!remStatus().last && load(RSNOOZE, '') !== today();
 async function pullReminder() {
   try {
     const r = await ghFetch(ghUrl().replace(/[^/]+$/, 'reminders.json'), { headers: ghHeaders(), cache: 'no-store' });
@@ -1881,12 +1943,30 @@ function viewGoalSettings() {
         catch (e) { msg.textContent = `Échec : ${e.message}`; }
       } }, 'Enregistrer')));
 }
+// Carte « Bien démarrer » pour un nouvel utilisateur : trois étapes qui se cochent seules ; elle disparaît
+// quand tout est fait.
+function startCard() {
+  const body = Object.values(db.body).filter(b => !b.deleted);
+  const steps = [
+    { done: goals?.poids != null, text: 'Fixe tes objectifs (poids cible, pas)', go: '#/cibles', label: 'Objectifs ›' },
+    { done: Object.values(db.sessions).some(r => !r.deleted && setsDone(r) > 0), text: 'Fais ta première séance', go: '#/', label: 'Séance ›' },
+    { done: body.some(b => b.poids != null) && body.some(b => MEASURES.some(m => b[m.key] != null)), text: 'Note ta première pesée et tes mensurations', go: null, label: 'Corps ›' },
+  ];
+  if (steps.every(s => s.done)) return null;
+  return h('div', { class: 'card start' },
+    h('b', { class: 'tt' }, 'Bien démarrer'),
+    steps.map(s => h('div', { class: 'todo' + (s.done ? ' ok' : '') },
+      h('span', { class: 'c', 'aria-hidden': 'true' }, s.done ? '✓' : ''),
+      h('span', {}, s.text),
+      s.done ? h('span', { class: 'sub' }, 'Fait') : h('a', { href: s.go || '#/corps', onclick: s.go ? null : ev => { ev.preventDefault(); openEntry(body.some(b => b.poids != null) ? 'mesures' : 'poids'); } }, s.label))));
+}
 function viewGoals() {
   setTab('obj');
   const list = Object.values(db.body).filter(b => !b.deleted).sort((a, b) => a.date.localeCompare(b.date));
   const pts = key => list.filter(b => b[key] != null).map(b => ({ t: parseYmd(b.date).getTime(), v: b[key] }));
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Objectifs'), syncChip()),
+    startCard(),
     // Pas et adhérence sur la même ligne ; sans pas, l'adhérence prend toute la largeur.
     (ws => ws ? h('div', { class: 'duo' }, ws, weeklyAdherenceCard()) : weeklyAdherenceCard(true))(weeklyStepsCard()),
     goalCard(['Poids', srcOf('poids') === 'manuel' ? h('span', { class: 'wb man', style: 'margin-left:8px' }, '✎ Manuel') : null], 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
@@ -1974,14 +2054,35 @@ function viewSync() {
       h('pre', { id: 'sync-log', class: 'sync-log' }, sync.log.length ? sync.log.join('\n') : 'Aucune tentative pour l\'instant.')));
   refreshChips(); // aligne le bouton sur l'état réel (par exemple une synchro déjà en cours)
 }
+// Contrôle d'une sauvegarde avant import : un mauvais fichier ne doit rien mélanger aux données (puis à GitHub).
+// Renvoie la raison du refus, ou null si le fichier a bien la forme d'un export de l'appli.
+function backupProblem(d) {
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return 'ce n\'est pas une sauvegarde Muscu';
+  if (!d.sessions && !d.body) return 'ni séances ni mesures dedans (est-ce bien un « Exporter JSON » de l\'appli ?)';
+  const isColl = c => c == null || (typeof c === 'object' && !Array.isArray(c));
+  if (!isColl(d.sessions) || !isColl(d.body)) return 'format inattendu';
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  for (const [id, r] of Object.entries(d.sessions || {})) {
+    if (!r || typeof r !== 'object' || r.id !== id || !DAY.test(r.date || '') || typeof r.name !== 'string' || (r.entries != null && typeof r.entries !== 'object'))
+      return `séance « ${String(id).slice(0, 40)} » illisible`;
+    for (const e of Object.values(r.entries || {})) if (!e || !Array.isArray(e.sets)) return `séance du ${fmtDate(r.date)} : exercice illisible`;
+  }
+  for (const [id, b] of Object.entries(d.body || {})) {
+    if (!b || typeof b !== 'object' || !DAY.test(b.date || '') || b.id !== id) return `mesure « ${String(id).slice(0, 40)} » illisible`;
+    for (const k of ['poids', 'mg', ...MEASURES.map(m => m.key)]) if (b[k] != null && typeof b[k] !== 'number') return `mesure du ${fmtDate(b.date)} : valeur non numérique`;
+  }
+  return null;
+}
 function viewBackup() {
   setTab('set');
   const fileIn = h('input', { type: 'file', accept: 'application/json', hidden: true });
   fileIn.addEventListener('change', async () => {
-    try {
-      const data = JSON.parse(await fileIn.files[0].text());
-      db = merge(db, data); save(); alert('Import terminé.'); viewBackup();
-    } catch { alert('Fichier invalide.'); }
+    let data;
+    try { data = JSON.parse(await fileIn.files[0].text()); } catch { alert('Fichier invalide : ce n\'est pas un fichier JSON.'); return; }
+    const err = backupProblem(data);
+    if (err) { alert(`Fichier refusé : ${err}. Rien n'a été importé.`); return; }
+    const nS = Object.keys(data.sessions || {}).length, nB = Object.keys(data.body || {}).length;
+    db = merge(db, data); save(); alert(`Import terminé : ${plural(nS, 'séance')} et ${plural(nB, 'mesure')} fusionnées.`); viewBackup();
   });
   mount(
     h('a', { class: 'back', href: '#/reglages' }, '‹ Réglages'),
