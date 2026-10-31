@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '58 (Withings optionnel)';
+const APP_VERSION = '59 (fusion par exercice)';
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -118,6 +118,7 @@ function commit(date, name, ex, entry) {
   const id = sessionId(date, name);
   const rec = db.sessions[id] || (db.sessions[id] = { id, date, name, entries: {} });
   rec.entries[ex.id] = entry;
+  entry.u = Date.now(); // heure de modification de l'exercice, pour la fusion (merge.js)
   rec.updatedAt = Date.now();
   rec.deleted = false;
   save();
@@ -170,7 +171,7 @@ function editClock(date, name, fn) {
   const rec = db.sessions[id] || (db.sessions[id] = { id, date, name, entries: {} });
   rec.clock = rec.clock || { start: null, end: null, pauseMs: 0, pausedAt: null };
   fn(rec.clock, Date.now());
-  rec.updatedAt = Date.now();
+  rec.clockU = rec.updatedAt = Date.now();
   rec.deleted = false;
   save();
 }
@@ -769,21 +770,23 @@ function openFiche(ex, sessionRecId) {
 function swapExercise(date, name, ex, toId) {
   const id = sessionId(date, name);
   const rec = db.sessions[id] || (db.sessions[id] = { id, date, name, entries: {} });
-  const done = doneSets(rec.entries[ex.id]);
-  if (done.length) rec.entries[ex.id].sets = rec.entries[ex.id].sets.filter(x => done.includes(x)); else delete rec.entries[ex.id];
+  const done = doneSets(rec.entries[ex.id]), now = Date.now();
+  if (done.length) Object.assign(rec.entries[ex.id], { sets: rec.entries[ex.id].sets.filter(x => done.includes(x)), u: now });
+  else if (rec.entries[ex.id]) { delete rec.entries[ex.id]; rec.removed = { ...rec.removed, [ex.id]: now }; }
   rec.swaps = { ...rec.swaps, [ex.id]: toId };
-  rec.updatedAt = Date.now(); rec.deleted = false;
+  rec.swapsU = rec.updatedAt = now; rec.deleted = false;
   save();
 }
 // Retour à l'exercice prévu : le remplaçant ne reste dans la séance que s'il a des séries faites.
 function unswapExercise(date, name, ex, toId) {
   const rec = db.sessions[sessionId(date, name)];
   if (!rec?.swaps) return;
-  delete rec.swaps[ex.id];
-  if (!doneSets(rec.entries[toId]).length) delete rec.entries[toId];
+  const now = Date.now();
+  rec.swaps = { ...rec.swaps }; delete rec.swaps[ex.id];
+  if (rec.entries[toId] && !doneSets(rec.entries[toId]).length) { delete rec.entries[toId]; rec.removed = { ...rec.removed, [toId]: now }; }
   const e = rec.entries[ex.id];
-  if (e) while (e.sets.length < ex.sets) { const l = e.sets[e.sets.length - 1]; e.sets.push({ kg: l.kg, reps: l.reps, rir: '', done: false }); }
-  rec.updatedAt = Date.now();
+  if (e && e.sets.length < ex.sets) { while (e.sets.length < ex.sets) { const l = e.sets[e.sets.length - 1]; e.sets.push({ kg: l.kg, reps: l.reps, rir: '', done: false }); } e.u = now; }
+  rec.swapsU = rec.updatedAt = now;
   save();
 }
 // Choix du remplaçant : variantes de la fiche, puis même groupe musculaire, ou recherche dans tout le catalogue.
@@ -1151,11 +1154,19 @@ async function ghGet() {
   if (r.status === 404) return { sha: null, data: null };
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
   const j = await r.json();
-  const txt = decodeURIComponent(escape(atob(j.content.replace(/\n/g, ''))));
-  return { sha: j.sha, data: JSON.parse(txt) };
+  return { sha: j.sha, data: await ghContent(ghUrl(), j) };
+}
+// Contenu d'un fichier du dépôt. Au-delà de 1 Mo, GitHub renvoie un contenu vide (encoding « none ») :
+// on le redemande alors au format brut, qui va jusqu'à 100 Mo.
+async function ghContent(url, j) {
+  if (j.encoding !== 'none' && j.content) return decodeContent(j);
+  const r = await ghFetch(url, { headers: { ...ghHeaders(), Accept: 'application/vnd.github.raw+json' }, cache: 'no-store' });
+  if (!r.ok) throw new Error(`GitHub ${r.status}`);
+  return JSON.parse(await r.text());
 }
 async function ghPut(data, sha) {
-  const body = { message: `sync ${new Date().toISOString()}`, content: btoa(unescape(encodeURIComponent(JSON.stringify(data, null, 1)))) };
+  // Sans indentation : le fichier grossit presque deux fois moins vite.
+  const body = { message: `sync ${new Date().toISOString()}`, content: btoa(unescape(encodeURIComponent(JSON.stringify(data)))) };
   if (sha) body.sha = sha;
   slog('Envoi des données vers GitHub…');
   const r = await ghFetch(ghUrl(), { method: 'PUT', headers: ghHeaders(), body: JSON.stringify(body) });
@@ -1163,37 +1174,9 @@ async function ghPut(data, sha) {
   if (r.status === 409 || r.status === 422) { const e = new Error('conflit'); e.conflict = true; throw e; }
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
 }
-const setCount = r => Object.values(r?.entries || {}).reduce((n, e) => n + (e.sets || []).filter(x => x.done).length, 0);
-function mergeColl(a, b) {
-  const out = { ...a };
-  for (const [id, rec] of Object.entries(b || {})) {
-    const cur = out[id];
-    if (!cur) { out[id] = rec; continue; }
-    // Une fiche vide ne remplace jamais une séance qui contient des séries validées (sauf suppression explicite).
-    if (!rec.deleted && !cur.deleted) {
-      if (setCount(rec) === 0 && setCount(cur) > 0) continue;
-      if (setCount(cur) === 0 && setCount(rec) > 0) { out[id] = rec; continue; }
-    }
-    if ((rec.updatedAt || 0) > (cur.updatedAt || 0)) out[id] = rec;
-  }
-  return out;
-}
-// Anciens noms de séances (avant le passage en anglais) : les fiches déjà enregistrées sont renommées à la volée.
-const LEGACY_NAMES = { 'Haut A': 'Upper A', 'Haut B': 'Upper B', 'Bas A': 'Lower A', 'Bas B': 'Lower B' };
-function migrateSessions(coll) {
-  const out = {};
-  for (const [id, rec] of Object.entries(coll || {})) {
-    const m = /^(\d{4}-\d{2}-\d{2})_(.+)$/.exec(id);
-    const to = m && LEGACY_NAMES[m[2]];
-    const nid = to ? `${m[1]}_${to}` : id, nrec = to ? { ...rec, id: nid, name: to } : rec;
-    out[nid] = out[nid] ? mergeColl({ [nid]: out[nid] }, { [nid]: nrec })[nid] : nrec;
-  }
-  return out;
-}
-const merge = (local, remote) => ({
-  sessions: mergeColl(migrateSessions(local.sessions), migrateSessions(remote?.sessions)),
-  body: mergeColl(local.body, remote?.body),
-});
+// Fusion exercice par exercice, partagée avec le dashboard (merge.js) : deux appareils qui modifient
+// la même séance ne s'écrasent plus.
+const merge = mergeData;
 
 // Programme : lecture seule de programs.json (écrit par le dashboard PC, à côté du fichier de données).
 // Renvoie true si une nouvelle version est arrivée. Un échec ici ne fait pas échouer la synchro des séances.
@@ -1203,7 +1186,7 @@ async function pullPrograms() {
     const r = await ghFetch(url, { headers: ghHeaders(), cache: 'no-store' });
     if (r.status === 404 || !r.ok) return false;
     const j = await r.json();
-    const p = JSON.parse(decodeURIComponent(escape(atob(j.content.replace(/\n/g, '')))));
+    const p = await ghContent(url, j);
     if (!Array.isArray(p.versions) || JSON.stringify(p.versions) === JSON.stringify(programs?.versions)) return false;
     programs = { versions: p.versions }; store(PKEY, programs); fillExercises();
     slog(`Programme reçu : ${programFor(today()).label}`);
@@ -1310,7 +1293,7 @@ async function pullWithings() {
   try {
     const r = await ghFetch(ghUrl().replace(/[^/]+$/, 'withings.json'), { headers: ghHeaders(), cache: 'no-store' });
     if (!r.ok) return; // 404 : Withings jamais connecté
-    wstate = decodeContent(await r.json()); store(WKEY, wstate);
+    wstate = await ghContent(r.url, await r.json()); store(WKEY, wstate);
   } catch (e) { slog(`État Withings non lu : ${e.message}`); }
 }
 // Lit un fichier JSON du dépôt privé, le transforme et le réécrit. fn renvoie null : rien à écrire.
@@ -1320,7 +1303,7 @@ async function updateRepoJson(name, fn, message) {
     const r = await ghFetch(url, { headers: ghHeaders(), cache: 'no-store' });
     if (!r.ok && r.status !== 404) throw new Error(`GitHub ${r.status}`);
     const j = r.status === 404 ? null : await r.json();
-    const next = fn(j ? decodeContent(j) : {});
+    const next = fn(j ? await ghContent(url, j) : {});
     if (!next) return null;
     const body = { message: `${message} ${new Date().toISOString()}`, content: btoa(unescape(encodeURIComponent(JSON.stringify(next, null, 1)))) };
     if (j) body.sha = j.sha;
@@ -1502,7 +1485,7 @@ async function pullActivity() {
   try {
     const r = await ghFetch(ghUrl().replace(/[^/]+$/, 'activity.json'), { headers: ghHeaders(), cache: 'no-store' });
     if (!r.ok) return false;
-    const next = decodeContent(await r.json());
+    const next = await ghContent(r.url, await r.json());
     if (JSON.stringify(next) === JSON.stringify(activity)) return false;
     activity = next; store(AKEY, activity);
     return true; // nouveaux pas : la page Séance est redessinée
@@ -1721,7 +1704,7 @@ async function pullReminder() {
   try {
     const r = await ghFetch(ghUrl().replace(/[^/]+$/, 'reminders.json'), { headers: ghHeaders(), cache: 'no-store' });
     if (!r.ok) return false; // 404 : jamais réglé, valeurs par défaut
-    const next = decodeContent(await r.json());
+    const next = await ghContent(r.url, await r.json());
     if (JSON.stringify(next) === JSON.stringify(reminder)) return false;
     reminder = next; store(RKEY, reminder);
     return true;
@@ -1795,7 +1778,7 @@ async function pullGoals() {
   try {
     const r = await ghFetch(ghUrl().replace(/[^/]+$/, 'goals.json'), { headers: ghHeaders(), cache: 'no-store' });
     if (!r.ok) return false; // 404 : aucun objectif saisi
-    const next = decodeContent(await r.json());
+    const next = await ghContent(r.url, await r.json());
     if (JSON.stringify(next) === JSON.stringify(goals)) return false;
     goals = next; store(GKEY, goals);
     return true;

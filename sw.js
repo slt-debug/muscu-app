@@ -1,7 +1,7 @@
 'use strict';
 // Cache de l'appli : elle s'ouvre sans réseau. Stratégie "cache d'abord, mise à jour en arrière-plan".
-const CACHE = 'muscu-v59';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'program.js', 'library.js', 'catalog.js', 'reminder.js', 'manifest.webmanifest',
+const CACHE = 'muscu-v60';
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'program.js', 'library.js', 'catalog.js', 'reminder.js', 'merge.js', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
