@@ -1,6 +1,6 @@
 'use strict';
 // Cache de l'appli : elle s'ouvre sans réseau. Stratégie "cache d'abord, mise à jour en arrière-plan".
-const CACHE = 'muscu-v61';
+const CACHE = 'muscu-v62';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'program.js', 'library.js', 'catalog.js', 'reminder.js', 'merge.js', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
@@ -18,7 +18,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   // La page relais Withings n'est jamais mise en cache : son contenu doit toujours être le dernier publié.
-  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin || req.url.includes('withings-callback')) return;
+  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin || req.url.includes('withings-callback') || req.url.includes('/dashboard/')) return; // le dashboard web n'est pas mis en cache : il a besoin du réseau et doit toujours être à jour
   e.respondWith(caches.open(CACHE).then(async cache => {
     const hit = await cache.match(req, { ignoreSearch: true });
     const net = fetch(req, { cache: 'no-cache' }).then(res => {
