@@ -276,7 +276,7 @@ function viewOverview() {
   const grid = Object.fromEntries(GROUPS.map(g => [g, Object.fromEntries(weeks.map(w => [w, 0]))]));
   for (const r of sess) {
     const w = weekStartOf(r.date); if (!weeks.includes(w)) continue;
-    for (const [exId, e] of Object.entries(r.entries || {})) { const g = GROUP[exId]; if (g) grid[g][w] += doneSets(e).length; }
+    for (const [exId, e] of Object.entries(r.entries || {})) { const g = GROUP[exId]; if (grid[g]) grid[g][w] += doneSets(e).length; } // le cardio ne compte pas dans les séries par muscle
   }
   // Cible = séries prévues par semaine dans le programme actif le lundi de la semaine (un programme appliqué
   // en cours de semaine compte à partir de la suivante). Gris sous la cible, vert pile, orange au-delà.
