@@ -59,6 +59,12 @@ const repsLabel = ex => perSet(ex)
   ? Array.from({ length: ex.sets }, (_, i) => rangeTxt(rangeAt(ex, i))).join(' / ')
   : `${ex.sets} × ${rangeTxt([ex.lo, ex.hi])}`;
 const roundStep = (kg, step) => step > 0 ? Math.round(kg / step) * step : Math.round(kg * 10) / 10;
+// Charge pour revenir en bas de fourchette après des reps en dessous : 1RM d'Epley (kg × (1 + reps / 30)) ramené
+// à « target » reps, arrondi au cran inférieur et au moins un cran sous la charge faite, jamais sous 0.
+function kgForReps(kg, reps, target, step) {
+  const s = step > 0 ? step : 0.5, k = kg * (1 + reps / 30) / (1 + target / 30);
+  return Math.max(0, Math.min(Math.floor(k / s + 1e-9) * s, kg - s));
+}
 // Charges et reps visées série par série, d'après les séries validées de la dernière séance (dans l'ordre).
 // up[i] : la série i a atteint le haut de sa fourchette la dernière fois.
 function perSetPlan(ex, lastSets) {
@@ -72,6 +78,7 @@ function perSetPlan(ex, lastSets) {
       sets.push({ kg, reps: prev && kg != null && prev.kg === kg ? Math.min(hi, prev.reps + 1) : lo });
     } else if (!prev) sets.push({ kg: i === 0 ? ex.kg ?? null : sets[i - 1].kg, reps: lo });
     else if (prev.reps >= hi) sets.push({ kg: prev.kg + ex.step, reps: lo });
+    else if (prev.reps < lo && prev.kg > 0) sets.push({ kg: kgForReps(prev.kg, prev.reps, lo, ex.step), reps: lo }); // sous la fourchette : on allège
     else sets.push({ kg: prev.kg, reps: Math.min(hi, prev.reps + 1) });
   }
   return { sets, up };
@@ -95,9 +102,15 @@ function setDev(ex, i, reps) {
   const [lo, hi] = rangeAt(ex, i);
   return reps < lo ? -1 : reps > hi ? 1 : 0;
 }
-// Exercice prévu au programme pour une entrée de séance (remplacements compris).
-const planEx = (list, r, exId) => list.find(x => x.id === exId) || list.find(x => r.swaps?.[x.id] === exId);
-function adherenceWeek(sessions, programFor, ws, upTo, todayStr) {
+// Exercice d'une entrée de séance, avec la fourchette affichée en séance : celle du programme, ou pour un
+// remplaçant (r.swaps) sa propre fourchette, donnée par defs(id) (EXERCISES), à défaut celle de l'exercice prévu.
+function planEx(list, r, exId, defs) {
+  const p = list.find(x => x.id === exId);
+  if (p) return p;
+  const orig = list.find(x => r.swaps?.[x.id] === exId);
+  return orig ? (defs && defs(exId)) || orig : null;
+}
+function adherenceWeek(sessions, programFor, ws, upTo, todayStr, defs) {
   const end = _ad(ws, 6), days = Array.from({ length: 7 }, (_, i) => _ad(ws, i)).filter(d => d <= upTo);
   const nDone = r => Object.values(r.entries || {}).reduce((n, e) => n + _done(e).length, 0);
   const recs = Object.values(sessions).filter(r => !r.deleted && nDone(r) > 0 && r.date >= ws && r.date <= end);
@@ -129,7 +142,7 @@ function adherenceWeek(sessions, programFor, ws, upTo, todayStr) {
   for (const r of recs) {
     const list = programFor(r.date).sessions[r.name] || [];
     for (const [exId, e] of Object.entries(r.entries || {})) {
-      const ex = planEx(list, r, exId);
+      const ex = planEx(list, r, exId, defs);
       if (!ex || !(ex.hi > 0) || isCardioEx(ex)) continue;
       const out = { '-1': [], 1: [] };
       e.sets.forEach((x, i) => {

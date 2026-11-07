@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '68 (écarts d’adhérence)';
+const APP_VERSION = '69 (objectif sous la fourchette)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -114,8 +114,9 @@ function suggest(ex, excludeId) {
     if (!last) return { ...out, text: `Première fois (${mode}) : trouve une charge qui laisse 1 à 2 reps en réserve sur chaque série.` };
     const kgReps = s => s.map(x => `${x.kg == null ? '?' : fmtKg(x.kg)} × ${x.reps}`).join(', ');
     const summary = `${fmtDate(last.date)} : ${kgReps(last.sets)}`;
-    if (ex.mode === 'top') return { ...out, text: plan.up[0] ? `${summary}. Top set réussi : monte à ${fmtKg(s0.kg)} kg.` : `${summary}. Objectif top set : ${fmtKg(s0.kg)} kg × ${s0.reps}.` };
-    return { ...out, text: `${summary}. Objectif : ${kgReps(plan.sets)}.` };
+    const below = last.sets.some((x, i) => x.reps < rangeAt(ex, i)[0]) ? ' Série(s) sous leur fourchette : charge allégée.' : '';
+    if (ex.mode === 'top') return { ...out, text: plan.up[0] ? `${summary}. Top set réussi : monte à ${fmtKg(s0.kg)} kg.` : `${summary}. Objectif top set : ${fmtKg(s0.kg)} kg × ${s0.reps}.${below}` };
+    return { ...out, text: `${summary}. Objectif : ${kgReps(plan.sets)}.${below}` };
   }
   if (!hist.length) {
     return { kg: ex.kg, reps: ex.lo, text: ex.kg == null ? 'Première fois : trouve une charge qui laisse 1 à 2 reps en réserve.' : `Charge de départ conseillée : ${fmtKg(ex.kg)} kg.` };
@@ -130,6 +131,11 @@ function suggest(ex, excludeId) {
     return { kg: top + ex.step, reps: ex.lo, text: `${summary}. Objectif : monter à ${fmtKg(top + ex.step)} kg.` };
   }
   const minReps = Math.min(...atTop.map(x => x.reps));
+  // Sous la fourchette : une rep de plus ne suffirait pas à y entrer, on allège (kgForReps, program.js).
+  if (minReps < ex.lo && top > 0) {
+    const kg = kgForReps(top, minReps, ex.lo, ex.step);
+    return { kg, reps: ex.lo, text: `${summary}, sous la fourchette ${rangeTxt([ex.lo, ex.hi])}. Objectif : ${fmtKg(kg)} kg × ${ex.lo} pour revenir dans la fourchette.` };
+  }
   const target = Math.min(ex.hi, minReps + 1);
   return { kg: top, reps: target, text: `${summary}. Objectif : ${fmtKg(top)} kg, ${target} reps sur chaque série.` };
 }
@@ -463,7 +469,7 @@ function weekStart() {
 // ---------- Adhérence au programme ----------
 // Score d'une semaine et liste des écarts : calcul commun avec le dashboard (adherenceWeek, program.js).
 const addDays = (d, n) => { const x = parseYmd(d); x.setDate(x.getDate() + n); return ymd(x); };
-const adherence = (ws, upTo) => adherenceWeek(db.sessions, programFor, ws, upTo, today());
+const adherence = (ws, upTo) => adherenceWeek(db.sessions, programFor, ws, upTo, today(), id => EXERCISES[id]);
 // Semaines complètes d'affilée à 80 % ou plus, avant la semaine en cours.
 function adherenceStreak() {
   const first = Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).map(r => r.date).sort()[0];
@@ -993,7 +999,7 @@ function devBadge(r) {
   const list = programFor(r.date).sessions[r.name] || [];
   let lo = 0, hi = 0, n = 0;
   for (const [exId, e] of Object.entries(r.entries || {})) {
-    const ex = planEx(list, r, exId) || EXERCISES[exId];
+    const ex = planEx(list, r, exId, id => EXERCISES[id]) || EXERCISES[exId];
     e.sets.forEach((x, i) => { if (!x.done) return; const d = setDev(ex, i, x.reps); n++; if (d < 0) lo++; if (d > 0) hi++; });
   }
   if (!n) return null;

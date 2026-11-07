@@ -162,6 +162,7 @@ input[type=date] { width: 150px; }
 .st.up { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
 .st.go { background: var(--field); color: var(--ink-2); }
 .st.new { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+.st.down { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
 .prog { display: inline-flex; gap: 3px; vertical-align: middle; }
 .prog i { width: 14px; height: 8px; border-radius: 2px; background: var(--field); display: block; border: 1px solid var(--grid); }
 .prog i.ok { background: var(--good); border-color: var(--good); }

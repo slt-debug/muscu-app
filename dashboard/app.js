@@ -7,7 +7,7 @@
 // On recharge alors une fois tous les fichiers en contournant le cache ; sinon, message plutôt que page blanche.
 (() => {
   const ok = typeof rangeAt === 'function' && typeof perSetPlan === 'function' && typeof SET_MODES !== 'undefined'
-    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function' && typeof pingUsage === 'function' && typeof adherenceWeek === 'function';
+    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function' && typeof pingUsage === 'function' && typeof adherenceWeek === 'function' && typeof kgForReps === 'function';
   const FLAG = 'muscu.dash.refetch';
   let tried = false;
   try { tried = sessionStorage.getItem(FLAG) === '1'; if (ok) sessionStorage.removeItem(FLAG); else sessionStorage.setItem(FLAG, '1'); } catch { /* stockage indisponible */ }
@@ -412,7 +412,9 @@ function tile(label, value, sub, cls) { return h('div', { class: 'card' }, h('di
 // Même lecture que la page Objectifs de l'iPhone (mêmes calculs, mêmes couleurs) : poids vers la cible,
 // adhérence au programme et pas, sur 8 semaines. Onglet ouvert au lancement.
 // Score d'adhérence d'une semaine et liste des écarts : calcul commun avec l'iPhone (adherenceWeek, program.js).
-const adherence = (ws, upTo) => adherenceWeek(data.sessions, programFor, ws, upTo, today());
+// Définition d'un exercice (remplaçant compris), pour juger ses séries sur la fourchette affichée en séance.
+const exDef = id => EXERCISES[id] || CATALOG.find(c => c.id === id);
+const adherence = (ws, upTo) => adherenceWeek(data.sessions, programFor, ws, upTo, today(), exDef);
 const ADH_GOAL = 85;
 const adhColor = v => v == null ? 'var(--ink-2)' : v >= 85 ? 'var(--good)' : v >= 60 ? 'var(--warn)' : 'var(--bad)';
 const fmtK = n => `${(Math.round(n / 100) / 10).toLocaleString('fr-FR')}k`;
@@ -684,7 +686,7 @@ function viewSessionEdit(id) {
       rir.addEventListener('change', () => { st.rir = rir.value; save(); });
       done.addEventListener('change', () => { st.done = done.checked; save(); });
       // Série validée hors de sa fourchette (setDev, program.js) : même flèche que sur l'iPhone.
-      const dev = st.done ? setDev(planEx(programFor(rec.date).sessions[rec.name] || [], rec, exId) || ex, i, st.reps) : 0;
+      const dev = st.done ? setDev(planEx(programFor(rec.date).sessions[rec.name] || [], rec, exId, exDef) || ex, i, st.reps) : 0;
       const flag = dev ? h('span', { class: 'flag ' + (dev < 0 ? 'gap-lo' : 'gap-hi'), title: dev < 0 ? 'Sous la fourchette' : 'Au-dessus de la fourchette' }, dev < 0 ? ' ↓' : ' ↑') : null;
       return h('tr', {}, h('td', { class: 'sub' }, i + 1), h('td', {}, kg), h('td', {}, reps, flag), h('td', {}, rir), h('td', {}, done),
         h('td', {}, h('button', { class: 'btn small secondary', title: 'Supprimer la série', onclick: () => { entry.sets.splice(i, 1); if (entry.sets.length) save(); else removeEx(); redraw(); } }, '×')));
@@ -1030,7 +1032,11 @@ function exStatus(ex) {
     return { st: up ? 'up' : 'go', top, reps: last.sets.map(x => x.reps), nTop: plan.up.filter(Boolean).length, next, load: last.load, date: last.date, plan };
   }
   const full = atTop.length >= ex.sets && atTop.every(x => x.reps >= ex.hi);
-  return { st: full ? 'up' : 'go', top, reps: atTop.map(x => x.reps), nTop: atTop.filter(x => x.reps >= ex.hi).length, next: full ? top + ex.step : top, load: last.load, date: last.date };
+  const base = { top, reps: atTop.map(x => x.reps), nTop: atTop.filter(x => x.reps >= ex.hi).length, load: last.load, date: last.date };
+  // Sous la fourchette : même règle que l'appli, on allège pour y revenir (kgForReps, program.js).
+  const minReps = Math.min(...atTop.map(x => x.reps));
+  if (!full && minReps < ex.lo && top > 0) return { ...base, st: 'down', next: kgForReps(top, minReps, ex.lo, ex.step) };
+  return { ...base, st: full ? 'up' : 'go', next: full ? top + ex.step : top };
 }
 // Record d'un exercice (mêmes règles que l'iPhone) : charge la plus lourde validée et meilleur nombre de reps à
 // cette charge, avec sa date (↑ si établi ces 30 derniers jours). PR visé = l'objectif que l'appli proposera à la
@@ -1044,7 +1050,7 @@ function exRecord(ex, st) {
   let pr = null;
   if (st.st === 'up' && st.next > kg) pr = `${fmtKg(st.next)} kg`;
   else if (st.st !== 'new') {
-    const sug = st.plan ? st.plan.sets.reduce((a, b) => (b.kg ?? -1) > (a.kg ?? -1) ? b : a) : st.st === 'up' ? { kg: st.next, reps: ex.lo } : { kg: st.top, reps: Math.min(ex.hi, Math.min(...st.reps) + 1) };
+    const sug = st.plan ? st.plan.sets.reduce((a, b) => (b.kg ?? -1) > (a.kg ?? -1) ? b : a) : st.st === 'up' || st.st === 'down' ? { kg: st.next, reps: ex.lo } : { kg: st.top, reps: Math.min(ex.hi, Math.min(...st.reps) + 1) };
     if (bestAt(sug.kg) >= 0 && sug.reps > bestAt(sug.kg)) pr = sug.kg === kg ? `× ${sug.reps}` : `${fmtKg(sug.kg)} kg × ${sug.reps}`;
   }
   return { kg, reps, date, fresh: date >= ymd(new Date(Date.now() - 30 * 864e5)), pr };
@@ -1056,7 +1062,7 @@ function spark(exId) {
   return s('svg', { class: 'spark', viewBox: '0 0 80 22', 'aria-label': `1RM estimé de ${fmtKg(v[0])} à ${fmtKg(v[v.length - 1])} kg` },
     s('polyline', { points: v.map((y, i) => `${i * 80 / (v.length - 1)},${20 - (y - lo) / r * 18}`).join(' ') }));
 }
-const STATUS = { up: ['Prêt à monter', 0], go: ['En cours', 1], new: ['À tester', 2] };
+const STATUS = { up: ['Prêt à monter', 0], down: ['À alléger', 1], go: ['En cours', 2], new: ['À tester', 3] };
 let progFilter = 'Toutes', progSort = 'st', balWeek = 'this';
 
 function viewProgram() {
