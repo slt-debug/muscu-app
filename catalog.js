@@ -70,6 +70,6 @@ const CATALOG = [
   { id: 'c_relevejambes', name: 'Relevé de jambes (chaise romaine)', group: 'Abdos', sets: 3, lo: 10, hi: 15, rest: 60, step: 0, kg: 0, note: 'Poids du corps' },
   { id: 'c_gainage', name: 'Gainage planche (secondes)', group: 'Abdos', sets: 3, lo: 30, hi: 60, rest: 60, step: 0, kg: 0, note: 'Reps = secondes tenues' },
   // Cardio : « reps » = minutes, pas de repos, non compté dans les séries par muscle
-  { id: 'c_marche', name: 'Marche inclinée tapis', group: 'Cardio', sets: 1, lo: 10, hi: 15, rest: 0, step: 0, kg: 0, note: 'Reps = minutes, pente 8 à 10 %, allure où tu peux parler' },
+  { id: 'c_marche', name: 'Marche inclinée tapis', group: 'Cardio', slope: true, sets: 1, lo: 10, hi: 15, rest: 0, step: 0, kg: 0, note: 'Reps = minutes, pente 8 à 10 %, allure où tu peux parler' },
   { id: 'c_velo', name: 'Vélo (cardio léger)', group: 'Cardio', sets: 1, lo: 10, hi: 15, rest: 0, step: 0, kg: 0, note: 'Reps = minutes' },
 ];

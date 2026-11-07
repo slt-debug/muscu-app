@@ -384,3 +384,12 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .card.start .ok .c { background: var(--good); border-color: var(--good); color: #fff; }
 .card.start .ok span:nth-child(2) { color: var(--ink-2); }
 .card.start a { font-weight: 600; font-size: 14px; white-space: nowrap; }
+/* Cardio : minutes (et pente pour la marche inclinée), barres « minutes par séance » */
+.set.cardio { grid-template-columns: 14px 1fr 44px; }
+.set.cardio.slope { grid-template-columns: 14px 1fr 1fr 44px; }
+.mbars { display: flex; gap: 5px; height: 130px; align-items: flex-end; margin-top: 10px; }
+.mbars .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; min-width: 0; }
+.mbars .col span { width: 100%; border-radius: 4px 4px 0 0; background: var(--series-1, var(--accent)); }
+.mbars .col b { font-size: 12px; font-weight: 600; color: var(--ink-2); margin-bottom: 2px; }
+.mdays { display: flex; gap: 5px; font-size: 10.5px; color: var(--muted); margin-top: 3px; }
+.mdays span { flex: 1; text-align: center; min-width: 0; overflow: hidden; white-space: nowrap; }

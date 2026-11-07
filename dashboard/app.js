@@ -883,6 +883,23 @@ function showFicheModal(id) {
 }
 
 let exSearch = '';
+// Cardio (marche inclinée, vélo) : minutes rangées dans reps (charge 0), pente en % pour la marche (st.pente).
+// Même lecture que l'iPhone : minutes des 12 dernières séances en barres, total du mois, tableau date / minutes / pente.
+const cardioMin = sets => Math.max(0, ...sets.map(x => x.reps || 0));
+const cardioPente = sets => sets.map(x => x.pente).filter(v => v != null).pop() ?? null;
+function cardioBlock(id, hist) {
+  const slope = !!CATALOG.find(c => c.id === id)?.slope;
+  const last = hist.slice(-12), mins = last.map(x => cardioMin(x.sets)), max = Math.max(...mins, 1);
+  const month = today().slice(0, 7), inMonth = hist.filter(x => x.date.startsWith(month));
+  const total = inMonth.reduce((a, x) => a + cardioMin(x.sets), 0);
+  return [h('div', { class: 'card' },
+    h('div', { class: 'row between' }, h('h3', { style: 'margin:0' }, 'Minutes par séance'), h('span', { class: 'sub' }, `ce mois-ci : ${total} min sur ${inMonth.length} séance${inMonth.length > 1 ? 's' : ''}`)),
+    h('div', { class: 'mbars', 'aria-label': `Minutes des ${last.length} dernières séances` }, last.map((x, i) => h('div', { class: 'col', title: `${fmtDate(x.date)} : ${mins[i]} min` }, h('b', {}, String(mins[i])), h('span', { style: `height:${Math.max(4, mins[i] / max * 80)}%` })))),
+    h('div', { class: 'mdays' }, last.map(x => h('span', {}, fmtDate(x.date))))),
+  h('div', { class: 'card', style: 'margin-top:12px' }, h('table', {},
+    h('tr', {}, h('th', {}, 'Date'), h('th', { class: 'num' }, 'Minutes'), slope ? h('th', { class: 'num' }, 'Pente') : null),
+    [...hist].reverse().map(x => { const p = cardioPente(x.sets); return h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', { class: 'num' }, String(cardioMin(x.sets))), slope ? h('td', { class: 'num' }, p != null ? `${fmtKg(p)} %` : '–') : null); })))];
+}
 function viewExercises(selected) {
   setTab('exercises');
   const all = allExercises();
@@ -899,7 +916,8 @@ function viewExercises(selected) {
       const items = Object.values(all).filter(e => (e.group || GROUP[e.id]) === g && (!q || norm(e.name).includes(q) || norm(LIBRARY[e.id]?.machine || '').includes(q)))
         .sort((a, b) => (inProg.has(b.id) - inProg.has(a.id)) || a.name.localeCompare(b.name, 'fr'));
       return items.length ? [h('div', { class: 'xg' }, g), ...items.map(e => h('a', { class: 'xi' + (e.id === id ? ' on' : ''), href: '#/exercices/' + e.id },
-        h('span', {}, e.name), inProg.has(e.id) ? h('small', { title: `Dans ${active.label}` }, 'P') : null))] : [];
+        h('span', {}, e.name), g === 'Cardio' && history(e.id).length ? h('small', { title: 'Durée de la dernière séance' }, `${cardioMin(history(e.id).at(-1).sets)} min`) : null,
+        inProg.has(e.id) ? h('small', { title: `Dans ${active.label}` }, 'P') : null))] : [];
     }));
   };
   const search = h('input', { placeholder: 'Rechercher (français ou nom machine)', value: exSearch });
@@ -911,6 +929,7 @@ function viewExercises(selected) {
   const variants = (LIBRARY[id]?.variants || []).filter(v => all[v]);
   const hist = history(id);
   const histBlock = !hist.length ? h('div', { class: 'card empty' }, 'Pas encore de données.')
+    : (ex.group || GROUP[id]) === 'Cardio' ? cardioBlock(id, hist)
     : [ex.kg === 0 || !e1rmPoints(id).length ? h('div', { class: 'card empty' }, 'Exercice au poids du corps : pas de courbe de 1RM.') : lineChart([{ name: '1RM estimé', points: e1rmPoints(id) }], 'kg', '1RM estimé (formule d\'Epley, meilleure série)', 760, 260),
       h('div', { class: 'card', style: 'margin-top:12px' }, h('table', {},
         h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'Séries (kg × reps)'), h('th', {}, 'Charge'), h('th', { class: 'num' }, '1RM estimé')),
