@@ -105,6 +105,10 @@ a { color: var(--accent); }
 :root { --gold: #a46a00; --gold-bg: #fbf0d9; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --gold: #e8b04a; --gold-bg: #3a2a0c; } }
 .pr-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; background: var(--gold-bg); color: var(--gold); font-size: 11px; font-weight: 700; vertical-align: 2px; }
+/* Fourchettes par série : badge du mode dans le titre, fourchette de la série sous son numéro. */
+.mode-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 6px; background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); font-size: 11px; font-weight: 700; vertical-align: 2px; text-transform: uppercase; letter-spacing: .03em; }
+.set.ps { grid-template-columns: 28px 1fr 1fr 42px 38px; }
+.set .n .rg { display: block; font-size: 10.5px; font-weight: 600; color: var(--warn); font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: -.02em; }
 .pr-card { margin-top: 16px; }
 .pr-card h3 { margin: 0 0 4px; font-size: 16px; }
 .pr-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; width: 100%; padding: 10px 0; border: 0; border-top: 1px solid var(--grid); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
@@ -393,3 +397,10 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .mbars .col b { font-size: 12px; font-weight: 600; color: var(--ink-2); margin-bottom: 2px; }
 .mdays { display: flex; gap: 5px; font-size: 10.5px; color: var(--muted); margin-top: 3px; }
 .mdays span { flex: 1; text-align: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+
+/* Petits écrans (Android 360 px) : la charge (« 142,5 » en gras) a besoin de plus de place que les reps. */
+@media (max-width: 380px) {
+  .stepper { grid-template-columns: 22px minmax(0, 1fr) 22px; }
+  .set { grid-template-columns: 14px 1.15fr .85fr 50px 44px; }
+  .set.ps { grid-template-columns: 28px 1.15fr .85fr 42px 38px; }
+}

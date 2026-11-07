@@ -193,6 +193,25 @@ const LIBRARY = {
   c_velo: { machine: 'Vélo', muscles: ['Cardio'], secondary: ['Quadriceps'], fw: '0798/stationary-bike-walk', yt: 'stationary bike steady state',
     steps: ['Selle réglée : genou légèrement fléchi en bas du coup de pédale.', 'Résistance modérée, rythme régulier.', 'Buste droit.'],
     errors: ['Selle trop basse.', 'Résistance trop faible.'], variants: ['c_marche'] },
+  // ---------- Ajouts du modèle Push / Pull / Jambes ----------
+  c_dips: { machine: 'Barres parallèles', muscles: ['Bas des pectoraux'], secondary: ['Triceps', 'Avant d\'épaule'], yt: 'chest dips form lean forward',
+    steps: ['En appui sur les barres, bras tendus, ceinture de lest si besoin.', 'Penche le buste en avant, jambes légèrement vers l\'arrière.', 'Descends jusqu\'à ce que les épaules passent un peu sous les coudes.', 'Remonte en poussant, sans verrouiller brutalement les coudes.'],
+    errors: ['Buste droit : le travail passe aux triceps.', 'Descendre trop bas, épaules qui s\'enroulent vers l\'avant.'], variants: ['dips', 'c_presspec'] },
+  c_tractions: { machine: 'Barre de traction + ceinture de lest', muscles: ['Grand dorsal'], secondary: ['Biceps', 'Rhomboïdes', 'Trapèzes moyens et inférieurs'], yt: 'weighted pull up form',
+    steps: ['Prise en pronation, mains un peu plus larges que les épaules.', 'Pars bras tendus, épaules engagées vers le bas.', 'Tire la poitrine vers la barre en ramenant les coudes le long du corps.', 'Redescends lentement jusqu\'à l\'extension complète.'],
+    errors: ['Demi-répétitions sans extension en bas.', 'Balancer les jambes pour s\'aider.'], variants: ['tv', 'c_tvserre'] },
+  c_latfront: { machine: 'Haltères', muscles: ['Deltoïde moyen', 'Avant d\'épaule'], secondary: ['Trapèzes'], yt: 'lateral front raise combo',
+    steps: ['Debout, haltères le long du corps, coudes légèrement fléchis.', 'Monte sur les côtés jusqu\'à hauteur des épaules, redescends.', 'Puis monte devant toi jusqu\'à hauteur des épaules, redescends.', 'Contrôle chaque descente.'],
+    errors: ['Monter au-dessus des épaules.', 'Prendre de l\'élan avec le buste.'], variants: ['lat', 'c_latpoulie'] },
+  c_upright: { machine: 'Barre EZ, haltères ou poulie basse', muscles: ['Deltoïde moyen'], secondary: ['Trapèzes supérieurs', 'Biceps'], yt: 'leaning upright row',
+    steps: ['Buste légèrement penché en avant, prise un peu plus large que les épaules.', 'Monte la charge le long du corps en menant avec les coudes.', 'Arrête quand les coudes arrivent à hauteur des épaules.', 'Redescends lentement.'],
+    errors: ['Prise trop serrée (épaules coincées).', 'Monter les mains plus haut que les coudes.'], variants: ['lat', 'c_latpoulie'] },
+  c_pupitre: { machine: 'Pupitre (preacher curl)', muscles: ['Biceps'], secondary: ['Brachial'], yt: 'ez bar preacher curl form',
+    steps: ['Aisselles calées en haut du pupitre, bras posés à plat.', 'Monte la barre sans décoller les coudes.', 'Serre les biceps en haut.', 'Descends lentement jusqu\'à l\'extension presque complète.'],
+    errors: ['Lâcher la descente (risque pour le coude).', 'Décoller les fesses ou les coudes pour tricher.'], variants: ['c_curlbarre', 'c_curlmach'] },
+  c_natation: { machine: 'Piscine', muscles: ['Cardio'], secondary: ['Dos', 'Épaules'], yt: 'swimming technique beginner freestyle',
+    steps: ['Échauffe-toi quelques longueurs à allure lente.', 'Garde une allure régulière où tu restes à l\'aise.', 'Note la durée totale passée à nager.'],
+    errors: ['Partir trop vite et finir épuisé.'], variants: ['c_velo', 'c_marche'] },
 };
 const fitwillUrl = lib => lib && lib.fw ? `https://fitwill.app/fr/exercise/${lib.fw}/` : null;
 const youtubeUrl = (lib, name) => `https://www.youtube.com/results?search_query=${encodeURIComponent((lib && lib.yt) || name)}`;

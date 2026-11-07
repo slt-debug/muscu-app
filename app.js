@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '63 (textes Android)';
+const APP_VERSION = '64 (fourchettes par série)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -107,6 +107,16 @@ function suggest(ex, excludeId) {
     const done = `Dernière fois (${fmtDate(last.date)}) : ${mins} min${pente != null ? `, pente ${fmtKg(pente)} %` : ''}.`;
     return { kg: 0, reps: Math.max(target, mins), pente, text: mins >= ex.hi ? `${done} Durée maximale atteinte : garde ${ex.hi} min.` : `${done} Objectif : ${target} min.` };
   }
+  if (perSet(ex)) {
+    const last = hist[hist.length - 1], plan = perSetPlan(ex, last?.sets);
+    const s0 = plan.sets[0], out = { kg: s0.kg, reps: s0.reps, sets: plan.sets };
+    const mode = ex.mode === 'top' ? 'top set puis −10 % à chaque série' : 'pyramide, chaque série progresse seule';
+    if (!last) return { ...out, text: `Première fois (${mode}) : trouve une charge qui laisse 1 à 2 reps en réserve sur chaque série.` };
+    const kgReps = s => s.map(x => `${x.kg == null ? '?' : fmtKg(x.kg)} × ${x.reps}`).join(', ');
+    const summary = `${fmtDate(last.date)} : ${kgReps(last.sets)}`;
+    if (ex.mode === 'top') return { ...out, text: plan.up[0] ? `${summary}. Top set réussi : monte à ${fmtKg(s0.kg)} kg.` : `${summary}. Objectif top set : ${fmtKg(s0.kg)} kg × ${s0.reps}.` };
+    return { ...out, text: `${summary}. Objectif : ${kgReps(plan.sets)}.` };
+  }
   if (!hist.length) {
     return { kg: ex.kg, reps: ex.lo, text: ex.kg == null ? 'Première fois : trouve une charge qui laisse 1 à 2 reps en réserve.' : `Charge de départ conseillée : ${fmtKg(ex.kg)} kg.` };
   }
@@ -134,7 +144,7 @@ function sessionRec(date, name) {
 function entryFor(ex, rec, sug) {
   const entry = rec?.entries?.[ex.id];
   if (entry) return entry;
-  return { sets: Array.from({ length: ex.sets }, () => ({ kg: sug.kg, reps: sug.reps, rir: '', done: false, ...(sug.pente != null ? { pente: sug.pente } : {}) })) };
+  return { sets: Array.from({ length: ex.sets }, (_, i) => ({ kg: sug.sets?.[i]?.kg ?? sug.kg, reps: sug.sets?.[i]?.reps ?? sug.reps, rir: '', done: false, ...(sug.pente != null ? { pente: sug.pente } : {}) })) };
 }
 function commit(date, name, ex, entry) {
   const rec = sessionRec(date, name);
@@ -475,7 +485,7 @@ function adherence(ws, upTo) {
     for (const [exId, e] of Object.entries(r.entries || {})) {
       const ex = list.find(x => x.id === exId) || list.find(x => r.swaps?.[x.id] === exId);
       if (!ex || !(ex.hi > 0)) continue;
-      for (const x of doneSets(e)) { ranged++; if (x.reps >= ex.lo && x.reps <= ex.hi) inRange++; }
+      for (const x of doneSets(e)) { const [lo, hi] = rangeAt(ex, e.sets.indexOf(x)); ranged++; if (x.reps >= lo && x.reps <= hi) inRange++; }
     }
   }
   const pct = (a, b) => b ? Math.min(100, Math.round(a / b * 100)) : null;
@@ -601,7 +611,7 @@ function viewSession(name, date) {
     const nDone = doneSets(entry).length;
     const open = ui.active === ex.id;
     const head = h('button', { class: 'ex-head', onclick: () => { ui.active = open ? null : ex.id; redraw(); } },
-      h('div', { class: 'grow' }, h('h3', {}, ex.name, prs[ex.id] ? h('span', { class: 'pr-tag' }, 'PR') : null), h('div', { class: 'sub' }, isCardio(ex) ? `${ex.lo === ex.hi ? ex.lo : `${ex.lo} à ${ex.hi}`} min${cardioNote(ex) ? ' · ' + cardioNote(ex) : ''}` : `${ex.sets} × ${ex.lo === ex.hi ? ex.lo : ex.lo + '-' + ex.hi}${ex.note ? ' · ' + ex.note : ''}`),
+      h('div', { class: 'grow' }, h('h3', {}, ex.name, perSet(ex) ? h('span', { class: 'mode-tag' }, SET_MODES[ex.mode]) : null, prs[ex.id] ? h('span', { class: 'pr-tag' }, 'PR') : null), h('div', { class: 'sub' }, isCardio(ex) ? `${ex.lo === ex.hi ? ex.lo : `${ex.lo} à ${ex.hi}`} min${cardioNote(ex) ? ' · ' + cardioNote(ex) : ''}` : `${repsLabel(ex)}${ex.note ? ' · ' + ex.note : ''}`),
         ex.swapOf ? h('span', { class: 'swaptag' }, `⇄ à la place de ${ex.swapOf.name}`) : ex.stoppedFor ? h('span', { class: 'swaptag' }, `⇄ arrêté, suite avec ${ex.stoppedFor}`) : null),
       h('span', { class: 'count' }, `${nDone}/${entry.sets.length}`));
     const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : ''), 'data-ex': ex.id },
@@ -610,7 +620,7 @@ function viewSession(name, date) {
     card.append(h('div', { class: 'hint' }, sugs[ex.id].text));
     card.append(isCardio(ex)
       ? h('div', { class: 'set cardio' + (hasSlope(ex) ? ' slope' : '') }, h('span'), h('span', { class: 'head' }, 'minutes'), hasSlope(ex) ? h('span', { class: 'head' }, 'pente %') : null, h('span'))
-      : h('div', { class: 'set' }, h('span'), h('span', { class: 'head' }, 'kg'), h('span', { class: 'head' }, 'reps'), h('span', { class: 'head' }, 'réserve'), h('span')));
+      : h('div', { class: 'set' + (perSet(ex) ? ' ps' : '') }, h('span'), h('span', { class: 'head' }, 'kg'), h('span', { class: 'head' }, 'reps'), h('span', { class: 'head' }, 'réserve'), h('span')));
     // Séries de la dernière séance de cet exercice : chaque valeur qui en diffère (même numéro de série)
     // s'affiche en orange avec l'écart, pour voir ce qui change et fait un éventuel record.
     const prevSets = exHistory(ex.id, id).at(-1)?.sets || [];
@@ -683,8 +693,9 @@ function viewSession(name, date) {
       card.append(cardio
         ? h('div', { class: 'set cardio' + (slope ? ' slope' : '') }, h('span', { class: 'n' }, i + 1), repStep,
           slope ? h('div', { class: 'stepper' }, h('button', { onclick: bump(penteIn, 'pente', -1, 0) }, '−'), h('div', { class: 'val' }, penteIn, dPente), h('button', { onclick: bump(penteIn, 'pente', 1, 0) }, '+')) : null, chk)
-        : h('div', { class: 'set' },
-          h('span', { class: 'n' }, i + 1),
+        // Fourchettes par série : celle de la série s'affiche sous son numéro.
+        : h('div', { class: 'set' + (perSet(ex) ? ' ps' : '') },
+          h('span', { class: 'n' }, i + 1, perSet(ex) ? h('small', { class: 'rg' }, rangeTxt(rangeAt(ex, i))) : null),
           h('div', { class: 'stepper' }, h('button', { onclick: bump(kgIn, 'kg', -ex.step, 0) }, '−'), h('div', { class: 'val' }, kgIn, dKg), h('button', { onclick: bump(kgIn, 'kg', ex.step, 0) }, '+')),
           repStep, rir, chk), warn);
     });

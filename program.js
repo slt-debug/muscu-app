@@ -43,3 +43,36 @@ const PROGRAM = {
     ],
   },
 };
+
+// ---------- Fourchettes par série (partagé par l'appli et le dashboard) ----------
+// mode 'top' : top set puis −10 % à chaque série (seule la 1re série fait monter la charge).
+// mode 'pyr' : pyramide, chaque série a sa charge et progresse seule.
+// ranges = [[lo, hi], …], une par série ; lo/hi restent la fourchette globale (anciennes versions, statistiques).
+const SET_MODES = { top: 'Top set', pyr: 'Pyramide' };
+const perSet = ex => !!SET_MODES[ex.mode] && Array.isArray(ex.ranges) && ex.ranges.length > 0;
+function rangeAt(ex, i) {
+  if (!perSet(ex)) return [ex.lo, ex.hi];
+  return ex.ranges[Math.min(i, ex.ranges.length - 1)];
+}
+const rangeTxt = ([lo, hi]) => lo === hi ? String(lo) : `${lo}-${hi}`;
+const repsLabel = ex => perSet(ex)
+  ? Array.from({ length: ex.sets }, (_, i) => rangeTxt(rangeAt(ex, i))).join(' / ')
+  : `${ex.sets} × ${rangeTxt([ex.lo, ex.hi])}`;
+const roundStep = (kg, step) => step > 0 ? Math.round(kg / step) * step : Math.round(kg * 10) / 10;
+// Charges et reps visées série par série, d'après les séries validées de la dernière séance (dans l'ordre).
+// up[i] : la série i a atteint le haut de sa fourchette la dernière fois.
+function perSetPlan(ex, lastSets) {
+  const sets = [], up = [];
+  for (let i = 0; i < ex.sets; i++) {
+    const [lo, hi] = rangeAt(ex, i), prev = lastSets?.[i];
+    up.push(!!prev && prev.reps >= hi);
+    if (ex.mode === 'top' && i > 0) {
+      // −10 % arrondi au cran, et au moins un cran de moins (petites charges, lest), jamais sous 0.
+      const base = sets[i - 1].kg, kg = base == null ? null : Math.max(0, Math.min(roundStep(base * 0.9, ex.step), base - ex.step));
+      sets.push({ kg, reps: prev && kg != null && prev.kg === kg ? Math.min(hi, prev.reps + 1) : lo });
+    } else if (!prev) sets.push({ kg: i === 0 ? ex.kg ?? null : sets[i - 1].kg, reps: lo });
+    else if (prev.reps >= hi) sets.push({ kg: prev.kg + ex.step, reps: lo });
+    else sets.push({ kg: prev.kg, reps: Math.min(hi, prev.reps + 1) });
+  }
+  return { sets, up };
+}

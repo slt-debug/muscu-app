@@ -349,3 +349,9 @@ body.logged-out #tabs, body.logged-out .status { visibility: hidden; }
 .mbars .col b { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 3px; }
 .mdays { display: flex; gap: 8px; font-size: 11.5px; color: var(--ink-2); margin-top: 4px; }
 .mdays span { flex: 1; text-align: center; min-width: 0; white-space: nowrap; }
+
+/* Éditeur : mode de fourchette puis une fourchette par ligne (S1, S2…). */
+td.reps { white-space: nowrap; }
+td.reps select.mode { width: 104px; margin-bottom: 4px; }
+td.reps .rgl { display: flex; align-items: center; gap: 3px; margin-top: 3px; }
+td.reps .rgl small { width: 20px; color: var(--muted); font-size: 11px; }

@@ -13,6 +13,7 @@ const CATALOG = [
   { id: 'c_presspec', name: 'Presse pectoraux (machine)', group: 'Pecs', sets: 3, lo: 8, hi: 12, rest: 120, step: 2.5 },
   { id: 'c_crossover', name: 'Écartés poulie haute (crossover)', group: 'Pecs', sets: 3, lo: 12, hi: 15, rest: 90, step: 2.5 },
   { id: 'c_dcsmith', name: 'Développé incliné Smith machine', group: 'Pecs', sets: 3, lo: 8, hi: 10, rest: 120, step: 2.5 },
+  { id: 'c_dips', name: 'Dips (pectoraux)', group: 'Pecs', sets: 3, lo: 8, hi: 12, rest: 120, step: 2.5, kg: 0, note: 'Buste penché en avant. Charge = lest (0 au poids du corps)' },
   // Dos
   { id: 'row', name: 'Rowing barre penchée', group: 'Dos', sets: 3, lo: 6, hi: 8, rest: 150, step: 2.5 },
   { id: 'tv', name: 'Tirage vertical', group: 'Dos', sets: 3, lo: 8, hi: 10, rest: 120, step: 2.5, note: 'Ou tractions' },
@@ -22,6 +23,7 @@ const CATALOG = [
   { id: 'c_tvserre', name: 'Tirage vertical prise serrée', group: 'Dos', sets: 3, lo: 10, hi: 12, rest: 90, step: 2.5 },
   { id: 'c_pullover', name: 'Pull-over poulie (bras tendus)', group: 'Dos', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5 },
   { id: 'c_lombaires', name: 'Extension du dos (machine)', group: 'Dos', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5 },
+  { id: 'c_tractions', name: 'Tractions lestées', group: 'Dos', sets: 3, lo: 6, hi: 10, rest: 120, step: 2.5, kg: 0, note: 'Charge = lest (0 au poids du corps)' },
   // Épaules
   { id: 'ohp', name: 'Développé épaules haltères', group: 'Épaules', sets: 3, lo: 6, hi: 8, rest: 120, step: 2, note: 'Charge par main' },
   { id: 'lat', name: 'Élévations latérales', group: 'Épaules', sets: 3, lo: 12, hi: 15, rest: 60, step: 1, note: 'Charge par main' },
@@ -30,6 +32,8 @@ const CATALOG = [
   { id: 'c_latpoulie', name: 'Élévations latérales poulie', group: 'Épaules', sets: 3, lo: 12, hi: 15, rest: 60, step: 1.25, note: 'Par bras' },
   { id: 'c_reardelt', name: 'Oiseau machine (rear delt)', group: 'Épaules', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5 },
   { id: 'c_facepull', name: 'Face pull poulie', group: 'Épaules', sets: 3, lo: 15, hi: 20, rest: 60, step: 2.5 },
+  { id: 'c_latfront', name: 'Élévations latérales et frontales', group: 'Épaules', sets: 3, lo: 12, hi: 15, rest: 60, step: 1, note: 'Haltères, charge par main' },
+  { id: 'c_upright', name: 'Upright row penché', group: 'Épaules', sets: 3, lo: 10, hi: 15, rest: 60, step: 2.5 },
   // Bras
   { id: 'curl', name: 'Curl haltères', group: 'Bras', sets: 3, lo: 8, hi: 10, rest: 90, step: 2, note: 'Charge par main' },
   { id: 'curlinc', name: 'Curl incliné haltères', group: 'Bras', sets: 3, lo: 10, hi: 12, rest: 90, step: 2, note: 'Charge par main' },
@@ -42,6 +46,7 @@ const CATALOG = [
   { id: 'c_curlpoulie', name: 'Curl poulie basse', group: 'Bras', sets: 3, lo: 12, hi: 15, rest: 60, step: 2.5 },
   { id: 'c_barrefront', name: 'Barre au front (EZ)', group: 'Bras', sets: 3, lo: 8, hi: 10, rest: 90, step: 2.5 },
   { id: 'c_kickback', name: 'Extension triceps un bras poulie', group: 'Bras', sets: 3, lo: 12, hi: 15, rest: 60, step: 1.25, note: 'Par bras' },
+  { id: 'c_pupitre', name: 'Curl pupitre', group: 'Bras', sets: 3, lo: 10, hi: 12, rest: 60, step: 2.5, note: 'Barre EZ ou haltère' },
   // Jambes
   { id: 'squat', name: 'Squat barre (rack)', group: 'Jambes', sets: 4, lo: 6, hi: 8, rest: 180, step: 2.5, note: 'Smith machine en alternative' },
   { id: 'sdt', name: 'Soulevé de terre', group: 'Jambes', sets: 3, lo: 3, hi: 5, rest: 180, step: 2.5 },
@@ -72,4 +77,5 @@ const CATALOG = [
   // Cardio : « reps » = minutes, pas de repos, non compté dans les séries par muscle
   { id: 'c_marche', name: 'Marche inclinée tapis', group: 'Cardio', slope: true, sets: 1, lo: 10, hi: 15, rest: 0, step: 0, kg: 0, note: 'Reps = minutes, pente 8 à 10 %, allure où tu peux parler' },
   { id: 'c_velo', name: 'Vélo (cardio léger)', group: 'Cardio', sets: 1, lo: 10, hi: 15, rest: 0, step: 0, kg: 0, note: 'Reps = minutes' },
+  { id: 'c_natation', name: 'Natation', group: 'Cardio', sets: 1, lo: 30, hi: 60, rest: 0, step: 0, kg: 0, note: 'Reps = minutes' },
 ];

@@ -67,6 +67,9 @@ function validProgram(p, needDate) {
       if (!e || typeof e.id !== 'string' || !e.id || typeof e.name !== 'string') return false;
       for (const k of ['sets', 'lo', 'hi', 'rest', 'step']) if (typeof e[k] !== 'number' || !(e[k] >= 0)) return false;
       if (e.sets < 1 || e.lo > e.hi) return false;
+      // Fourchettes par série (program.js) : un mode connu et une paire [lo, hi] par série.
+      if (e.mode != null && (!SET_MODES[e.mode] || !Array.isArray(e.ranges) || e.ranges.length !== e.sets
+        || !e.ranges.every(r => Array.isArray(r) && r.length === 2 && r.every(n => typeof n === 'number' && n >= 0) && r[0] <= r[1]))) return false;
     }
   }
   return true;

@@ -403,7 +403,7 @@ function adherence(ws, upTo) {
     for (const [exId, e] of Object.entries(r.entries || {})) {
       const ex = list.find(x => x.id === exId) || list.find(x => r.swaps?.[x.id] === exId);
       if (!ex || !(ex.hi > 0)) continue;
-      for (const x of doneSets(e)) { ranged++; if (x.reps >= ex.lo && x.reps <= ex.hi) inRange++; }
+      for (const x of doneSets(e)) { const [lo, hi] = rangeAt(ex, e.sets.indexOf(x)); ranged++; if (x.reps >= lo && x.reps <= hi) inRange++; }
     }
   }
   const pct = (a, b) => b ? Math.min(100, Math.round(a / b * 100)) : null;
@@ -645,7 +645,7 @@ function viewSessionEdit(id) {
         h('td', {}, h('button', { class: 'btn small secondary', title: 'Supprimer la série', onclick: () => { entry.sets.splice(i, 1); if (entry.sets.length) save(); else removeEx(); redraw(); } }, '×')));
     });
     return h('div', { class: 'card ex' },
-      h('h3', {}, ex ? ex.name : exId, ' ', h('span', {}, ex ? `${ex.sets} × ${ex.lo === ex.hi ? ex.lo : ex.lo + '-' + ex.hi}` : ''),
+      h('h3', {}, ex ? ex.name : exId, ' ', h('span', {}, ex ? `${repsLabel(ex)}` : ''),
         swappedFrom[exId] ? h('span', { class: 'swaptag' }, `⇄ remplace ${exName(swappedFrom[exId])}`) : swaps[exId] ? h('span', { class: 'swaptag' }, `⇄ arrêté, suite avec ${exName(swaps[exId])}`) : null),
       h('table', { class: 'sets' }, h('tr', {}, h('th', {}, '#'), h('th', {}, 'kg'), h('th', {}, 'reps'), h('th', {}, 'réserve'), h('th', {}, 'faite'), h('th', {})), rows),
       h('div', { class: 'row', style: 'margin-top:8px;align-items:stretch' },
@@ -684,7 +684,7 @@ function viewSessionEdit(id) {
       h('span', { class: 'sub' }, rec.clock?.start ? `(${fmtHour(rec.clock.start)} → ${fmtHour(clockEnd(rec))}${rec.clock.pauseMs ? `, pauses ${fmtMin(rec.clock.pauseMs)}` : ''})` : '(non chronométrée : saisis la durée pour l\'ajouter)')),
     blocks.length ? blocks : h('div', { class: 'card empty' }, 'Aucun exercice dans cette séance.'),
     h('div', { class: 'row', style: 'margin-top:14px' }, h('span', { class: 'sub' }, 'Ajouter un exercice :'), sel,
-      h('button', { class: 'btn small', onclick: () => { const ex = EXERCISES[sel.value]; if (!ex) return; rec.entries[ex.id] = { sets: Array.from({ length: ex.sets }, () => ({ kg: ex.kg, reps: ex.lo, rir: '', done: true })), u: Date.now() }; save(); redraw(); } }, 'Ajouter')));
+      h('button', { class: 'btn small', onclick: () => { const ex = EXERCISES[sel.value]; if (!ex) return; rec.entries[ex.id] = { sets: Array.from({ length: ex.sets }, (_, i) => ({ kg: ex.kg, reps: rangeAt(ex, i)[0], rir: '', done: true })), u: Date.now() }; save(); redraw(); } }, 'Ajouter')));
 }
 
 // Mensurations suivies en plus du poids (mêmes clés que l'appli iPhone).
@@ -925,7 +925,7 @@ function viewExercises(selected) {
   drawList();
 
   // Place dans le programme actif, variantes, historique
-  const where = Object.entries(active.sessions).filter(([, l]) => l.some(e => e.id === id)).map(([n, l]) => { const e = l.find(x => x.id === id); return `${n} (${DAY_ORDER.filter(d => active.days[d] === n).map(d => JOURS[d]).join(', ') || 'aucun jour'}) · ${e.sets} × ${rng(e)} · repos ${fmtRest(e.rest)}`; });
+  const where = Object.entries(active.sessions).filter(([, l]) => l.some(e => e.id === id)).map(([n, l]) => { const e = l.find(x => x.id === id); return `${n} (${DAY_ORDER.filter(d => active.days[d] === n).map(d => JOURS[d]).join(', ') || 'aucun jour'}) · ${repsLabel(e)} · repos ${fmtRest(e.rest)}`; });
   const variants = (LIBRARY[id]?.variants || []).filter(v => all[v]);
   const hist = history(id);
   const histBlock = !hist.length ? h('div', { class: 'card empty' }, 'Pas encore de données.')
@@ -945,7 +945,7 @@ function viewExercises(selected) {
           h('div', { class: 'lbl' }, 'Variantes et remplaçants'),
           variants.length ? h('div', { class: 'row' }, variants.map(v => h('a', { class: 'pill', href: '#/exercices/' + v }, all[v].name))) : h('div', { class: 'sub' }, '–'),
           h('div', { class: 'lbl' }, 'Conseillé'),
-          h('div', { class: 'sub' }, `${ex.sets} × ${rng(ex)} · repos ${fmtRest(ex.rest)} · pas de ${fmtKg(ex.step)} kg${ex.note ? ' · ' + ex.note : ''}`))),
+          h('div', { class: 'sub' }, `${repsLabel(ex)} · repos ${fmtRest(ex.rest)} · pas de ${fmtKg(ex.step)} kg${ex.note ? ' · ' + ex.note : ''}`))),
       h('h2', {}, 'Historique'), histBlock)));
   // Garde la ligne choisie visible dans la liste
   listBox.querySelector('.xi.on')?.scrollIntoView({ block: 'nearest' });
@@ -978,6 +978,12 @@ function exStatus(ex) {
   if (!hist.length) return { st: 'new' };
   const last = hist[hist.length - 1];
   const top = Math.max(...last.sets.map(x => x.kg)), atTop = last.sets.filter(x => x.kg === top);
+  // Fourchettes par série : top set => la 1re série décide ; pyramide => prêt dès qu'une série a atteint le haut de la sienne.
+  if (perSet(ex)) {
+    const plan = perSetPlan(ex, last.sets), up = ex.mode === 'top' ? plan.up[0] : plan.up.some(Boolean);
+    const next = ex.mode === 'top' ? plan.sets[0].kg : Math.max(...plan.sets.map(x => x.kg ?? 0));
+    return { st: up ? 'up' : 'go', top, reps: last.sets.map(x => x.reps), nTop: plan.up.filter(Boolean).length, next, load: last.load, date: last.date, plan };
+  }
   const full = atTop.length >= ex.sets && atTop.every(x => x.reps >= ex.hi);
   return { st: full ? 'up' : 'go', top, reps: atTop.map(x => x.reps), nTop: atTop.filter(x => x.reps >= ex.hi).length, next: full ? top + ex.step : top, load: last.load, date: last.date };
 }
@@ -993,7 +999,7 @@ function exRecord(ex, st) {
   let pr = null;
   if (st.st === 'up' && st.next > kg) pr = `${fmtKg(st.next)} kg`;
   else if (st.st !== 'new') {
-    const sug = st.st === 'up' ? { kg: st.next, reps: ex.lo } : { kg: st.top, reps: Math.min(ex.hi, Math.min(...st.reps) + 1) };
+    const sug = st.plan ? st.plan.sets.reduce((a, b) => (b.kg ?? -1) > (a.kg ?? -1) ? b : a) : st.st === 'up' ? { kg: st.next, reps: ex.lo } : { kg: st.top, reps: Math.min(ex.hi, Math.min(...st.reps) + 1) };
     if (bestAt(sug.kg) >= 0 && sug.reps > bestAt(sug.kg)) pr = sug.kg === kg ? `× ${sug.reps}` : `${fmtKg(sug.kg)} kg × ${sug.reps}`;
   }
   return { kg, reps, date, fresh: date >= ymd(new Date(Date.now() - 30 * 864e5)), pr };
@@ -1025,7 +1031,7 @@ function viewProgram() {
       h('span', { class: 'est' + (est > 60 ? ' over' : '') }, `${list.reduce((a, e) => a + e.sets, 0)} séries · `, h('b', {}, `≈ ${est} min`), real ? ` · réel ${real}` : ''),
       list.map(e => h('div', { class: 'pex' }, gdot(e.id),
         h('span', { class: 'nm' }, e.name),
-        h('span', { class: 'dt' }, `${e.sets} × ${e.lo === e.hi ? e.lo : e.lo + '-' + e.hi} · repos ${fmtRest(e.rest)}${e.note ? ' · ' + e.note : ''}`))));
+        h('span', { class: 'dt' }, `${repsLabel(e)} · repos ${fmtRest(e.rest)}${e.note ? ' · ' + e.note : ''}`))));
   }));
 
   // B. Équilibre musculaire : prévu (barre) et réel de la semaine choisie (trait)
@@ -1085,11 +1091,11 @@ function viewProgram() {
       rows.map(({ ex, s: st, where: w }) => { const rc = exRecord(ex, st); return h('tr', { class: 'click', onclick: () => { location.hash = '#/exercices/' + ex.id; } },
         h('td', {}, w.join(', ')),
         h('td', { class: 'exn' }, gdot(ex.id), ex.name),
-        h('td', {}, `${ex.sets} × ${ex.lo === ex.hi ? ex.lo : ex.lo + '-' + ex.hi}`),
+        h('td', {}, `${repsLabel(ex)}`),
         h('td', { class: 'num' }, st.top != null ? `${fmtKg(st.top)} kg` : '–'),
         h('td', {}, st.reps ? [st.reps.join(' · '), h('small', {}, fmtDate(st.date))] : '–',
           swappedOn[ex.id] && !(st.date >= swappedOn[ex.id]) ? h('small', { class: 'swapnote' }, `⇄ remplacé le ${fmtDate(swappedOn[ex.id])}`) : null),
-        h('td', {}, h('span', { class: 'prog', title: st.nTop != null ? `${st.nTop} série(s) sur ${ex.sets} au haut de la fourchette (${ex.hi} reps)` : '' },
+        h('td', {}, h('span', { class: 'prog', title: st.nTop != null ? `${st.nTop} série(s) sur ${ex.sets} au haut de ${perSet(ex) ? 'leur fourchette' : `la fourchette (${ex.hi} reps)`}` : '' },
           Array.from({ length: ex.sets }, (_, i) => h('i', { class: i < (st.nTop || 0) ? 'ok' : '' })))),
         h('td', {}, h('span', { class: 'st ' + st.st }, STATUS[st.st][0]),
           st.load === 'up' ? h('span', { class: 'tag up' }, ' ↑ jugée légère') : st.load === 'down' ? h('span', { class: 'tag down' }, ' ↓ jugée lourde') : null),
@@ -1127,6 +1133,7 @@ function viewProgram() {
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const rng = e => e.lo === e.hi ? String(e.lo) : `${e.lo}-${e.hi}`;
 const addDays = (str, n) => { const d = parseYmd(str); d.setDate(d.getDate() + n); return ymd(d); };
+const keptRanges = new Map();
 let editSession = null, applyOpen = false, replacing = null, histOpen = null, progSaveTimer = null;
 
 async function saveProgDoc() {
@@ -1160,11 +1167,12 @@ function diffPrograms(a, b) {
     for (const e of A) if (!B.some(x => x.id === e.id)) out.push(`${n} : − ${e.name}`);
     for (const e of B) {
       const o = A.find(x => x.id === e.id);
-      if (!o) { out.push(`${n} : + ${e.name} ${e.sets} × ${rng(e)}`); continue; }
+      if (!o) { out.push(`${n} : + ${e.name} ${repsLabel(e)}`); continue; }
       const ch = [];
       if (o.name !== e.name) ch.push(`renommé « ${e.name} »`);
       if (o.sets !== e.sets) ch.push(`séries ${o.sets} → ${e.sets}`);
-      if (o.lo !== e.lo || o.hi !== e.hi) ch.push(`reps ${rng(o)} → ${rng(e)}`);
+      const rl = x => perSet(x) ? `${SET_MODES[x.mode].toLowerCase()} ${repsLabel(x)}` : rng(x);
+      if (rl(o) !== rl(e)) ch.push(`reps ${rl(o)} → ${rl(e)}`);
       if (o.rest !== e.rest) ch.push(`repos ${o.rest} → ${e.rest} s`);
       if (o.step !== e.step) ch.push(`pas ${fmtKg(o.step)} → ${fmtKg(e.step)} kg`);
       if ((o.kg ?? null) !== (e.kg ?? null)) ch.push(`charge de départ ${o.kg == null ? '–' : fmtKg(o.kg)} → ${e.kg == null ? '–' : fmtKg(e.kg)} kg`);
@@ -1249,17 +1257,43 @@ function viewProgramEdit() {
         if (k === 'kg') e.kg = v;
         else if (v != null && v >= 0) e[k] = k === 'sets' ? Math.max(1, Math.round(v)) : v;
         if (e.lo > e.hi) { if (k === 'lo') e.hi = e.lo; else e.lo = e.hi; }
+        if (k === 'sets') fixRanges(e);
       }
       if (k === 'note' && !e.note) delete e.note;
       changed();
     });
     return i;
   };
+  // Fourchettes : une seule (Identique) ou une par série (Top set, Pyramide) ; lo/hi suivent les extrêmes.
+  // Repasser en « Identique » garde les fourchettes de côté (keptRanges) le temps de l'édition.
+  const fixRanges = e => {
+    if (!SET_MODES[e.mode]) { if (e.ranges) keptRanges.set(e.id, e.ranges); delete e.mode; delete e.ranges; return; }
+    const r = Array.isArray(e.ranges) && e.ranges.length ? e.ranges : keptRanges.get(e.id) || [[e.lo, e.hi]];
+    e.ranges = Array.from({ length: e.sets }, (_, i) => [...(r[i] || r[r.length - 1])]);
+    e.lo = Math.min(...e.ranges.map(x => x[0])); e.hi = Math.max(...e.ranges.map(x => x[1]));
+  };
+  const rangeIn = (e, i, j) => {
+    const b = baseEx(e.id), was = b ? rangeAt(b, i)[j] : e.ranges[i][j], cur = e.ranges[i][j];
+    const inp = h('input', { class: 'ein n' + (cur !== was || !perSet(b || {}) ? ' chg' : ''), value: cur, title: `Série ${i + 1}`, style: 'width:34px' });
+    inp.addEventListener('change', () => {
+      const v = num(inp.value);
+      if (v != null && v >= 0) { const r = e.ranges[i]; r[j] = Math.round(v); if (r[0] > r[1]) r[j ? 0 : 1] = r[j]; }
+      fixRanges(e); changed();
+    });
+    return inp;
+  };
+  const repsCell = e => {
+    const msel = h('select', { class: 'ein mode', title: 'Fourchette identique pour toutes les séries, ou une par série' },
+      [['', 'Identique'], ...Object.entries(SET_MODES)].map(([v, l]) => h('option', { value: v, selected: (e.mode || '') === v }, l)));
+    msel.addEventListener('change', () => { if (msel.value) e.mode = msel.value; else delete e.mode; fixRanges(e); changed(); });
+    return [msel, perSet(e) ? e.ranges.map((_, i) => h('div', { class: 'rgl' }, h('small', {}, `S${i + 1}`), rangeIn(e, i, 0), '–', rangeIn(e, i, 1)))
+      : h('div', { class: 'rgl' }, field(e, 'lo', { w: 40 }), '–', field(e, 'hi', { w: 40 }))];
+  };
   // Choix d'un exercice : catalogue des machines groupé par muscle, plus les exercices déjà utilisés hors catalogue.
   const exerciseSelect = (exclude, firstLabel) => {
     const known = [...CATALOG, ...Object.values(EXERCISES).filter(e => !CATALOG.some(c => c.id === e.id))];
     return h('select', {}, h('option', { value: '' }, firstLabel),
-      EDIT_GROUPS.map(g => h('optgroup', { label: g }, known.filter(e => (e.group || GROUP[e.id]) === g && !exclude.includes(e.id)).map(e => h('option', { value: e.id }, `${e.name} · ${e.sets} × ${rng(e)}`)))),
+      EDIT_GROUPS.map(g => h('optgroup', { label: g }, known.filter(e => (e.group || GROUP[e.id]) === g && !exclude.includes(e.id)).map(e => h('option', { value: e.id }, `${e.name} · ${repsLabel(e)}`)))),
       h('option', { value: '__new' }, '➕ Créer un nouvel exercice…'));
   };
   const pick = id => {
@@ -1289,7 +1323,7 @@ function viewProgramEdit() {
       h('td', { class: 'exn' }, nameCell),
       h('td', {}, gsel),
       h('td', {}, field(e, 'sets', { w: 40 })),
-      h('td', { class: 'reps' }, field(e, 'lo', { w: 40 }), '–', field(e, 'hi', { w: 40 })),
+      h('td', { class: 'reps' }, repsCell(e)),
       h('td', {}, field(e, 'rest', { w: 44 })),
       h('td', {}, field(e, 'step', { w: 42 })),
       h('td', {}, field(e, 'kg', { w: 44, ph: '–' })),
@@ -1396,7 +1430,7 @@ function viewProgramHistory() {
       h('div', { class: 'sub' }, (v.changes && v.changes.length ? v.changes : ['Programme de départ']).join(' ; '),
         histOpen === v.id ? h('div', { class: 'hdetail' }, Object.entries(v.sessions).map(([n, l]) => h('div', {},
           h('b', {}, n, ' '), h('span', { class: 'sub' }, `(${DAY_ORDER.filter(d => v.days[d] === n).map(d => JOURS[d]).join(', ') || 'aucun jour'})`),
-          h('div', { class: 'sub' }, l.map(e => `${e.name} ${e.sets} × ${rng(e)}`).join(' · '))))) : null),
+          h('div', { class: 'sub' }, l.map(e => `${e.name} ${repsLabel(e)}`).join(' · '))))) : null),
       h('div', { class: 'row', style: 'justify-content:flex-end' },
         h('button', { class: 'btn small secondary', onclick: () => { histOpen = histOpen === v.id ? null : v.id; viewProgramHistory(); } }, histOpen === v.id ? 'Masquer' : 'Voir'),
         progOk && v.id === active.id ? h('button', { class: 'btn small secondary', title: 'Pour une erreur de saisie, sans créer de nouvelle version', onclick: () => {
