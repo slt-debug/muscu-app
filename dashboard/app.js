@@ -7,7 +7,7 @@
 // On recharge alors une fois tous les fichiers en contournant le cache ; sinon, message plutôt que page blanche.
 (() => {
   const ok = typeof rangeAt === 'function' && typeof perSetPlan === 'function' && typeof SET_MODES !== 'undefined'
-    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function';
+    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function' && typeof pingUsage === 'function';
   const FLAG = 'muscu.dash.refetch';
   let tried = false;
   try { tried = sessionStorage.getItem(FLAG) === '1'; if (ok) sessionStorage.removeItem(FLAG); else sessionStorage.setItem(FLAG, '1'); } catch { /* stockage indisponible */ }
@@ -135,7 +135,8 @@ async function load() {
   setStatus('Chargement…');
   try {
     const acc = await checkAccess(dcfg.token).catch(() => null); // réseau en erreur : la lecture des données dira pourquoi
-    if (acc && !acc.ok) { refusedLogin = acc.login; acctBtn.hidden = true; setStatus(''); return viewRefused(); }
+    if (acc && !acc.ok) { pingUsage('refus', 'Dashboard · ordinateur'); refusedLogin = acc.login; acctBtn.hidden = true; setStatus(''); return viewRefused(); }
+    if (acc) pingUsage(`dashboard/${usageLabel(acc.hash)}`, `${(document.querySelector('script[src*="app.js?v="]')?.src.match(/v=(\w+)/) || [])[1] || ''} · ${deviceKind()}`);
     const [d, p, a, r, g, w] = await Promise.all([api('/api/data'), api('/api/programs').catch(() => null), api('/api/activity').catch(() => null), api('/api/reminders').catch(() => null),
       api('/api/goals').catch(() => null), api('/api/withings').catch(() => null)]);
     data = { sessions: d.sessions || {}, body: d.body || {} };
@@ -1508,7 +1509,7 @@ function viewLogin(msg) {
     btn.disabled = true; btn.textContent = 'Vérification…'; err.hidden = true;
     try {
       const acc = await checkAccess(c.token);
-      if (!acc.ok) { refusedLogin = acc.login; storeDcfg({ owner: c.owner, repo: c.repo }); return viewRefused(); }
+      if (!acc.ok) { pingUsage('refus', 'Dashboard · ordinateur'); refusedLogin = acc.login; storeDcfg({ owner: c.owner, repo: c.repo }); return viewRefused(); }
       await checkConnection(c);
     }
     catch (e) { err.textContent = cap(explainError(String(e.message || e))); err.hidden = false; btn.disabled = false; btn.textContent = 'Se connecter'; return; }

@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '66 (accès réservé)';
+const APP_VERSION = '67 (suivi d’usage)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -2089,6 +2089,7 @@ function viewSettings() {
         : 'Dans Safari : bouton Partager, puis « Sur l\'écran d\'accueil ».') + ' L\'appli s\'ouvrira ensuite en plein écran et fonctionnera sans réseau.')],
     h('h2', {}, 'À propos'),
     h('p', { class: 'sub' }, `Version ${APP_VERSION}`),
+    h('p', { class: 'sub' }, 'Une fois par jour, l\'appli indique à son auteur qu\'elle a été ouverte : ton numéro d\'ami (pas ton nom), la version et le type de téléphone. Rien sur tes séances, ton poids ou tes mesures.'),
     h('p', { class: 'sub' }, (p => `${p.label}${p.from ? ` · depuis le ${fmtDate(p.from)}` : ''}`)(programFor(today()))),
     h('p', { class: 'sub' }, `Double progression : quand toutes les séries atteignent le haut de la fourchette de reps, l'appli propose de monter la charge. ${Object.keys(db.sessions).length} séances et ${Object.keys(db.body).length} mesures enregistrées.`));
 }
@@ -2281,6 +2282,7 @@ async function verifyAccess() {
     const a = await checkAccess(cfg.token);
     access = { login: a.login, hash: a.hash, at: Date.now() }; store(ACKEY, access);
     if (!a.ok) slog(`Compte ${a.login} non autorisé`);
+    pingUsage(a.ok ? `ouverture/${usageLabel(a.hash)}` : 'refus', a.ok ? `v${APP_VERSION.split(' ')[0]} · ${deviceKind()}` : `Appli · ${deviceKind()}`);
     return a.ok;
   } catch (e) { slog(`Accès non vérifié : ${e.message}`); return true; }
 }
@@ -2313,7 +2315,7 @@ function viewGate(state) {
     try {
       const a = await checkAccess(c.token);
       access = { login: a.login, hash: a.hash, at: Date.now() }; store(ACKEY, access);
-      if (!a.ok) return render(); // écran « Appli réservée », rien n'est enregistré
+      if (!a.ok) { pingUsage('refus', `Appli · ${deviceKind()}`); return render(); } // écran « Appli réservée », rien n'est enregistré
       const r = await ghFetch(`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}`, { headers: { Authorization: `Bearer ${c.token}`, Accept: 'application/vnd.github+json' }, cache: 'no-store' });
       if (r.status === 404) throw new Error('Dépôt introuvable : vérifie le compte et le nom du dépôt, et que le jeton y a accès.');
       if (!r.ok) throw new Error(`GitHub ${r.status}`);
@@ -2335,7 +2337,8 @@ function viewGate(state) {
     h('h1', {}, 'Bienvenue'),
     h('p', { class: 'sub' }, 'Cette appli est réservée à un cercle privé. Connecte ton dépôt GitHub pour commencer : l\'appli vérifie que ton compte est autorisé.'),
     form,
-    h('p', { class: 'sub' }, 'Pas encore de dépôt ? Le mode d\'emploi est sur ', h('a', { href: 'https://github.com/slt-debug/muscu-data-template', target: '_blank', rel: 'noopener' }, 'github.com/slt-debug/muscu-data-template'), '.'));
+    h('p', { class: 'sub' }, 'Pas encore de dépôt ? Le mode d\'emploi est sur ', h('a', { href: 'https://github.com/slt-debug/muscu-data-template', target: '_blank', rel: 'noopener' }, 'github.com/slt-debug/muscu-data-template'), '.'),
+    h('p', { class: 'sub small' }, 'L\'appli signale à son auteur, une fois par jour, qu\'elle est utilisée (sans aucune donnée personnelle). Détails dans Réglages › À propos.'));
 }
 let lastHash = '', exFrom = '';
 function render() {
