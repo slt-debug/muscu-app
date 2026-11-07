@@ -5,6 +5,7 @@
 // Limite : le code est public, quelqu'un de technique peut le copier sans ce contrôle. Ça bloque les inconnus.
 const ALLOWED = [
   '07a0d956d9b58f8d6d4bbbe69df56ff65c64f38857eb3569438ea7d90a8ae087', // propriétaire
+  '2bd28b3a4b751da7a7810032daeba340daa566ebbee4626bc1deeb6038b89021', // ami 1 (07/11/2026)
 ];
 async function loginHash(login) {
   const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(login).toLowerCase()));
