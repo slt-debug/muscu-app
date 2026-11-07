@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '67 (suivi d’usage)';
+const APP_VERSION = '68 (écarts d’adhérence)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -461,38 +461,9 @@ function weekStart() {
 }
 
 // ---------- Adhérence au programme ----------
-// Score d'une semaine (lundi ws) jusqu'au jour upTo inclus = moyenne des critères disponibles :
-// séries validées ÷ séries prévues à date (plafonné à 100 %), séances faites le jour prévu (± 1 jour),
-// séries dont les reps tombent dans la fourchette prévue. La séance du jour n'est due que si elle est commencée.
+// Score d'une semaine et liste des écarts : calcul commun avec le dashboard (adherenceWeek, program.js).
 const addDays = (d, n) => { const x = parseYmd(d); x.setDate(x.getDate() + n); return ymd(x); };
-function adherence(ws, upTo) {
-  const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i)).filter(d => d <= upTo);
-  const recs = Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0 && r.date >= ws && r.date <= addDays(ws, 6));
-  let planned = 0;
-  const plannedDays = [];
-  for (const d of days) {
-    const name = programFor(d).days[parseYmd(d).getDay()];
-    if (!name) continue;
-    plannedDays.push({ d, name });
-    if (d === today() && d === upTo && !db.sessions[sessionId(d, name)]?.entries) continue; // pas encore commencée
-    planned += (programFor(d).sessions[name] || []).reduce((n, e) => n + e.sets, 0);
-  }
-  const done = recs.reduce((n, r) => n + setsDone(r), 0);
-  const onDay = recs.filter(r => plannedDays.some(p => p.name === r.name && Math.abs(parseYmd(p.d) - parseYmd(r.date)) <= 864e5)).length;
-  let inRange = 0, ranged = 0;
-  for (const r of recs) {
-    const list = programFor(r.date).sessions[r.name] || [];
-    for (const [exId, e] of Object.entries(r.entries || {})) {
-      const ex = list.find(x => x.id === exId) || list.find(x => r.swaps?.[x.id] === exId);
-      if (!ex || !(ex.hi > 0)) continue;
-      for (const x of doneSets(e)) { const [lo, hi] = rangeAt(ex, e.sets.indexOf(x)); ranged++; if (x.reps >= lo && x.reps <= hi) inRange++; }
-    }
-  }
-  const pct = (a, b) => b ? Math.min(100, Math.round(a / b * 100)) : null;
-  const c = { series: pct(done, planned), jours: pct(onDay, recs.length), reps: pct(inRange, ranged) };
-  const vals = Object.values(c).filter(v => v != null);
-  return { ...c, score: vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null, done, planned, onDay, nRecs: recs.length, inRange, ranged };
-}
+const adherence = (ws, upTo) => adherenceWeek(db.sessions, programFor, ws, upTo, today());
 // Semaines complètes d'affilée à 80 % ou plus, avant la semaine en cours.
 function adherenceStreak() {
   const first = Object.values(db.sessions).filter(r => !r.deleted && setsDone(r) > 0).map(r => r.date).sort()[0];
@@ -513,15 +484,38 @@ function adherenceRing(label, score) {
     score ? s('circle', { cx: 35, cy: 35, r, fill: 'none', stroke: adhColor(score), 'stroke-width': 6, 'stroke-linecap': 'round', 'stroke-dasharray': `${len * score / 100} ${len}`, transform: 'rotate(-90 35 35)' }) : null,
     s('text', { x: 35, y: 41, 'text-anchor': 'middle' }, label));
 }
-// Détail de l'adhérence, déplié sous les tuiles du haut de la page Séance.
+// Écarts d'un critère (adherenceWeek, program.js) : au plus 5 lignes, la plus récente en haut,
+// chacune avec un lien vers la séance (exercice déplié).
+const gapDay = d => `${JOURS[parseYmd(d).getDay()]} ${parseYmd(d).getDate()}`;
+function gapText(g) {
+  if (g.type === 'seance') return [`${g.name} non faite`, `prévue ${gapDay(g.date)}`];
+  if (g.type === 'jour') return [g.name, g.plannedDate ? `faite ${gapDay(g.date)} au lieu de ${gapDay(g.plannedDate)}` : `faite ${gapDay(g.date)}, hors des jours prévus`];
+  if (g.type === 'series') return [g.exName, `${g.name}, ${gapDay(g.date)} : ${g.done} série${g.done > 1 ? 's' : ''} sur ${g.of}`];
+  const reps = [...new Set(g.sets.map(x => x.reps))].join(', '), kgs = [...new Set(g.sets.map(x => fmtKg(x.kg)))];
+  const ranges = [...new Set(g.sets.map(x => rangeTxt(x.range)))].join(' / '), n = g.sets.length;
+  return [`${g.exName} ${g.dir < 0 ? '↓' : '↑'}`, `${g.name}, ${gapDay(g.date)} : ${n} série${n > 1 ? 's' : ''} à ${reps} reps${kgs.length === 1 ? ` (${kgs[0]} kg)` : ''}, prévu ${ranges}. ${g.dir < 0 ? 'Charge trop lourde ?' : 'La charge montera à la prochaine séance.'}`];
+}
+function gapList(gaps) {
+  if (!gaps.length) return null;
+  const go1 = g => () => { ui.openEx = g.exId; location.hash = `#/seance/${encodeURIComponent(g.name)}/${g.date}`; };
+  return h('div', { class: 'gaps' }, gaps.slice(0, 5).map(g => {
+    const [t, sub] = gapText(g);
+    return h('div', { class: 'gap' + (g.dir > 0 ? ' up' : '') }, h('b', {}, t), h('span', { class: 'sub' }, sub),
+      g.type === 'seance' ? null : h('button', { class: 'linkbtn', onclick: go1(g) }, 'Voir la séance ›'));
+  }), gaps.length > 5 ? h('span', { class: 'sub' }, `et ${gaps.length - 5} autre${gaps.length > 6 ? 's' : ''}`) : null);
+}
+// Détail de l'adhérence, déplié sous les tuiles du haut de la page Séance, avec les écarts sous chaque critère.
 function adherenceDetails(a) {
   const streak = adherenceStreak();
   const line = (name, v, txt) => h('div', { class: 'adh-row' },
     h('span', {}, h('b', {}, name), h('small', {}, txt)), h('span', { class: 'adh-v', style: `color:${adhColor(v)}` }, v == null ? '–' : `${v} %`));
   return h('div', { class: 'card adh-det' },
     line('Séries', a.series, a.planned ? `${a.done} sur ${a.planned} prévues à date` : 'rien de prévu pour l\'instant'),
+    gapList(a.gaps.filter(g => g.type === 'seance' || g.type === 'series')),
     line('Jours', a.jours, a.nRecs ? `${a.onDay} séance${a.onDay > 1 ? 's' : ''} sur ${a.nRecs} au jour prévu (± 1 jour)` : 'aucune séance faite'),
-    line('Reps', a.reps, a.ranged ? `${a.inRange} série${a.inRange > 1 ? 's' : ''} sur ${a.ranged} dans la fourchette` : 'aucune série validée'),
+    gapList(a.gaps.filter(g => g.type === 'jour')),
+    line('Reps', a.reps, a.ranged ? `${a.inRange} série${a.inRange > 1 ? 's' : ''} sur ${a.ranged} pas sous la fourchette` : 'aucune série validée'),
+    gapList(a.gaps.filter(g => g.type === 'reps')),
     h('div', { class: 'adh-row total' }, h('b', {}, 'Score'), h('span', { class: 'adh-v', style: `color:${adhColor(a.score)}` }, a.score == null ? '–' : `${a.score} %`)),
     h('p', { class: 'sub' }, `Constance : ${streak ? `${plural(streak, 'semaine')} d'affilée à 80 % ou plus` : 'pas encore de semaine complète à 80 % ou plus'}. Score = moyenne des trois critères à date ; un jour de repos ou une séance pas encore commencée ne compte pas. Vert à partir de 85 %, orange de 60 à 84 %, rouge en dessous.`));
 }
@@ -597,6 +591,7 @@ function viewSession(name, date) {
   keepAwake();
   const total = list.reduce((n, ex) => n + ex.sets, 0);
   const sugs = Object.fromEntries(list.map(ex => [ex.id, suggest(ex, id)]));
+  if (ui.openEx) { ui.active = ui.openEx; ui.openEx = null; } // lien « Voir la séance » d'un écart
   if (ui.active && !list.some(ex => ex.id === ui.active)) ui.active = undefined;
   if (ui.active === undefined) {
     const first = list.find(ex => doneSets(rec?.entries?.[ex.id]).length < ex.sets);
@@ -610,8 +605,12 @@ function viewSession(name, date) {
     const entry = entryFor(ex, rec, sugs[ex.id]);
     const nDone = doneSets(entry).length;
     const open = ui.active === ex.id;
+    // Séries validées hors de leur fourchette (setDev, program.js) : flèche à côté des reps, pastille sur la carte.
+    const devs = entry.sets.map((x, i) => x.done ? setDev(ex, i, x.reps) : 0);
+    const nLo = devs.filter(d => d < 0).length, nHi = devs.filter(d => d > 0).length;
+    const devTags = [nLo ? h('span', { class: 'dev-tag lo' }, `${nLo} hors fourchette`) : null, nHi ? h('span', { class: 'dev-tag hi' }, `${nHi} au-dessus`) : null];
     const head = h('button', { class: 'ex-head', onclick: () => { ui.active = open ? null : ex.id; redraw(); } },
-      h('div', { class: 'grow' }, h('h3', {}, ex.name, perSet(ex) ? h('span', { class: 'mode-tag' }, SET_MODES[ex.mode]) : null, prs[ex.id] ? h('span', { class: 'pr-tag' }, 'PR') : null), h('div', { class: 'sub' }, isCardio(ex) ? `${ex.lo === ex.hi ? ex.lo : `${ex.lo} à ${ex.hi}`} min${cardioNote(ex) ? ' · ' + cardioNote(ex) : ''}` : `${repsLabel(ex)}${ex.note ? ' · ' + ex.note : ''}`),
+      h('div', { class: 'grow' }, h('h3', {}, ex.name, perSet(ex) ? h('span', { class: 'mode-tag' }, SET_MODES[ex.mode]) : null, prs[ex.id] ? h('span', { class: 'pr-tag' }, 'PR') : null, devTags), h('div', { class: 'sub' }, isCardio(ex) ? `${ex.lo === ex.hi ? ex.lo : `${ex.lo} à ${ex.hi}`} min${cardioNote(ex) ? ' · ' + cardioNote(ex) : ''}` : `${repsLabel(ex)}${ex.note ? ' · ' + ex.note : ''}`),
         ex.swapOf ? h('span', { class: 'swaptag' }, `⇄ à la place de ${ex.swapOf.name}`) : ex.stoppedFor ? h('span', { class: 'swaptag' }, `⇄ arrêté, suite avec ${ex.stoppedFor}`) : null),
       h('span', { class: 'count' }, `${nDone}/${entry.sets.length}`));
     const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : ''), 'data-ex': ex.id },
@@ -689,15 +688,20 @@ function viewSession(name, date) {
         }
         redraw();
       } }, st.done ? '✓' : '○');
+      // Série hors fourchette : flèche sous le numéro de série (à côté des reps, elle masquerait le chiffre sur 360 px).
+      const dev = devs[i], flag = dev ? h('small', { class: 'flag ' + (dev < 0 ? 'lo' : 'hi'), title: dev < 0 ? 'Sous la fourchette' : 'Au-dessus de la fourchette' }, dev < 0 ? '↓' : '↑') : null;
       const repStep = h('div', { class: 'stepper' }, h('button', { onclick: bump(repIn, 'reps', -1, 0) }, '−'), h('div', { class: 'val' }, repIn, dReps), h('button', { onclick: bump(repIn, 'reps', 1, 0) }, '+'));
+      // Juste après une série sous sa fourchette, un mot sous la série tant que la suivante n'est pas validée.
+      const [lo, hi] = rangeAt(ex, i), lastDone = devs[i] < 0 && i + 1 < entry.sets.length && !entry.sets[i + 1].done && entry.sets.slice(0, i + 1).every(x => x.done);
+      const devMsg = lastDone ? h('div', { class: 'dev-msg' }, `↓ ${st.reps} reps, sous la fourchette ${rangeTxt([lo, hi])}. Si c'est la charge, baisse-la d'un cran ou touche « Lourd ».`) : null;
       card.append(cardio
         ? h('div', { class: 'set cardio' + (slope ? ' slope' : '') }, h('span', { class: 'n' }, i + 1), repStep,
           slope ? h('div', { class: 'stepper' }, h('button', { onclick: bump(penteIn, 'pente', -1, 0) }, '−'), h('div', { class: 'val' }, penteIn, dPente), h('button', { onclick: bump(penteIn, 'pente', 1, 0) }, '+')) : null, chk)
         // Fourchettes par série : celle de la série s'affiche sous son numéro.
         : h('div', { class: 'set' + (perSet(ex) ? ' ps' : '') },
-          h('span', { class: 'n' }, i + 1, perSet(ex) ? h('small', { class: 'rg' }, rangeTxt(rangeAt(ex, i))) : null),
+          h('span', { class: 'n' }, i + 1, perSet(ex) ? h('small', { class: 'rg' }, rangeTxt(rangeAt(ex, i))) : null, flag),
           h('div', { class: 'stepper' }, h('button', { onclick: bump(kgIn, 'kg', -ex.step, 0) }, '−'), h('div', { class: 'val' }, kgIn, dKg), h('button', { onclick: bump(kgIn, 'kg', ex.step, 0) }, '+')),
-          repStep, rir, chk), warn);
+          repStep, rir, chk), warn, devMsg || '');
     });
     // Jugement de la charge : une seule flèche cochée à la fois, on la décoche en la touchant de nouveau. Aucun effet sur les charges proposées.
     const mark = kind => () => { entry.load = entry.load === kind ? null : kind; commit(date, name, ex, entry); redraw(); };
@@ -984,6 +988,18 @@ function strengthCard() {
     }));
 }
 // Toutes les séances, groupées par semaine (du lundi), avec le nombre et le temps total de chaque semaine.
+// Repère d'une séance : ✓ si aucune série hors fourchette, sinon le nombre sous (↓) et au-dessus (↑).
+function devBadge(r) {
+  const list = programFor(r.date).sessions[r.name] || [];
+  let lo = 0, hi = 0, n = 0;
+  for (const [exId, e] of Object.entries(r.entries || {})) {
+    const ex = planEx(list, r, exId) || EXERCISES[exId];
+    e.sets.forEach((x, i) => { if (!x.done) return; const d = setDev(ex, i, x.reps); n++; if (d < 0) lo++; if (d > 0) hi++; });
+  }
+  if (!n) return null;
+  if (!lo && !hi) return h('span', { class: 'dev-tag ok', title: 'Toutes les séries dans la fourchette' }, '✓');
+  return [lo ? h('span', { class: 'dev-tag lo', title: 'Séries sous la fourchette' }, `${lo} ↓`) : null, hi ? h('span', { class: 'dev-tag hi', title: 'Séries au-dessus de la fourchette' }, `${hi} ↑`) : null];
+}
 function viewHistorySessions() {
   setTab('hist');
   const weekOf = str => { const d = parseYmd(str); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return ymd(d); };
@@ -1001,7 +1017,7 @@ function viewHistorySessions() {
       return [h('div', { class: 'grp-head' }, h('span', {}, `Semaine du ${fmtDate(w)}`), h('span', {}, `${recs.length}${ms ? ' · ' + fmtMin(ms) : ''}`)),
         h('div', { class: 'card' }, recs.map(r => h('a', { class: 'list-item', href: `#/seance/${encodeURIComponent(r.name)}/${r.date}` },
           h('span', {}, `${cap(JOURS[parseYmd(r.date).getDay()].slice(0, 3))}. ${fmtDate(r.date)}, ${r.name}`),
-          h('span', { class: 'sub' }, r.clock?.start ? fmtMin(sessionDuration(r)) : plural(setsDone(r), 'série')))))];
+          h('span', { class: 'sub' }, r.clock?.start ? fmtMin(sessionDuration(r)) : plural(setsDone(r), 'série'), devBadge(r)))))];
     }) : h('p', { class: 'muted' }, 'Aucune séance pour l\'instant.'));
 }
 // Exercices regroupés par groupe musculaire, avec recherche. Valeur = 1RM estimé de la dernière séance ;
