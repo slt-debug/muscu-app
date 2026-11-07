@@ -1224,6 +1224,19 @@ function viewProgramEdit() {
     for (const k of Object.keys(D.days)) if (D.days[k] === editSession) D.days[k] = nn;
     editSession = nn; changed();
   };
+  // Modèles (templates.js) : remplacent les jours et les séances du brouillon, sans toucher à l'historique.
+  const tplSelect = () => {
+    const sel = h('select', { class: 'tplsel', title: 'Remplacer le brouillon par un modèle de programme' }, h('option', { value: '' }, 'Partir d\'un modèle…'),
+      TEMPLATES.map(t => h('option', { value: t.id }, `${t.label} (${t.desc})`)));
+    sel.addEventListener('change', () => {
+      const t = TEMPLATES.find(x => x.id === sel.value);
+      if (!t || !confirm(`Remplacer tout le brouillon par le modèle « ${t.label} » ? Les séances déjà faites restent dans l'historique.`)) { sel.value = ''; return; }
+      D.days = clone(t.days); D.sessions = clone(t.sessions); editSession = null; replacing = null;
+      for (const list of Object.values(D.sessions)) for (const e of list) GROUP[e.id] = e.group || GROUP[e.id];
+      changed();
+    });
+    return sel;
+  };
   const tabs = h('div', { class: 'stabs' },
     names.map(n => h('button', { class: 'pill' + (n === editSession ? ' on' : ''), onclick: () => { editSession = n; replacing = null; redraw(); } }, n)),
     h('button', { class: 'pill add', onclick: () => {
@@ -1231,6 +1244,7 @@ function viewProgramEdit() {
       if (!nn) return; if (D.sessions[nn]) { alert('Ce nom existe déjà.'); return; }
       D.sessions[nn] = []; editSession = nn; changed();
     } }, '+ Séance'),
+    tplSelect(),
     h('span', { style: 'flex:1' }),
     editSession ? [
       h('button', { class: 'btn small secondary', onclick: renameSession }, 'Renommer'),

@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '64 (fourchettes par série)';
+const APP_VERSION = '65 (choix du programme)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -2002,9 +2002,48 @@ function viewGoalSettings() {
 }
 // Carte « Bien démarrer » pour un nouvel utilisateur : trois étapes qui se cochent seules ; elle disparaît
 // quand tout est fait.
+// ---------- Choix du programme au premier lancement ----------
+// Proposé tant que le dépôt n'a pas de programs.json. L'appli ne l'écrit que s'il n'existe pas encore
+// (sinon elle charge celui du dépôt) : elle ne remplace jamais un programme fait dans le dashboard.
+const hasProgram = () => !!programs?.versions?.length;
+const dayList = t => [1, 2, 3, 4, 5, 6, 0].filter(d => t.days[d]).map(d => `${cap(JOURS[d].slice(0, 3))} ${t.days[d]}`);
+function viewProgramChoice() {
+  setTab('obj');
+  if (!ui.tpl) ui.tpl = TEMPLATES[0].id;
+  const t = TEMPLATES.find(x => x.id === ui.tpl) || TEMPLATES[0];
+  const msg = h('p', { class: 'sub', role: 'status' });
+  const start = async () => {
+    if (!cfgOk()) return go('#/sync');
+    msg.textContent = 'Enregistrement…';
+    try {
+      const v = { id: 'p1', label: t.label, from: today(), days: t.days, sessions: JSON.parse(JSON.stringify(t.sessions)) };
+      const res = await updateRepoJson('programs.json', d => Array.isArray(d.versions) && d.versions.length ? null : { versions: [v] }, 'programme');
+      if (res) { programs = { versions: res.versions }; store(PKEY, programs); fillExercises(); slog(`Programme choisi : ${t.label}`); }
+      else await pullPrograms(); // un programme existait déjà dans le dépôt : on le garde
+      go('#/objectifs');
+    } catch (e) { msg.textContent = `Non enregistré : ${e.message}`; }
+  };
+  mount(
+    h('a', { class: 'back', href: '#/objectifs' }, '‹ Objectifs'),
+    h('h1', {}, 'Choisis ton programme'),
+    h('p', { class: 'sub' }, 'Tu pourras le modifier ensuite dans le dashboard.'),
+    TEMPLATES.map(x => {
+      const n = Object.values(x.sessions).reduce((a, l) => a + l.length, 0), sel = x.id === t.id;
+      return h('button', { class: 'card tpl' + (sel ? ' sel' : ''), 'aria-pressed': String(sel), onclick: () => { ui.tpl = x.id; viewProgramChoice(); } },
+        h('b', {}, x.label),
+        h('span', { class: 'sub' }, `${x.desc} · ${n} exercices`),
+        h('span', { class: 'days' }, dayList(x).map(d => h('span', {}, d))),
+        sel ? Object.entries(x.sessions).map(([name, list]) => h('div', { class: 'tpl-s' }, h('b', {}, name),
+          list.map(e => h('div', { class: 'sub' }, `${e.name} · ${isCardio(e) ? `${e.lo} à ${e.hi} min` : repsLabel(e)}`)))) : null);
+    }),
+    cfgOk() ? null : h('p', { class: 'sub' }, 'Règle d\'abord la synchronisation GitHub : le programme est enregistré dans ton dépôt.'),
+    h('button', { class: 'btn', onclick: start }, cfgOk() ? `Commencer avec ${t.label}` : 'Régler la synchronisation'),
+    msg);
+}
 function startCard() {
   const body = Object.values(db.body).filter(b => !b.deleted);
   const steps = [
+    { done: hasProgram(), text: 'Choisis ton programme', go: '#/programme', label: 'Programme ›' },
     { done: goals?.poids != null, text: 'Fixe tes objectifs (poids cible, pas)', go: '#/cibles', label: 'Objectifs ›' },
     { done: Object.values(db.sessions).some(r => !r.deleted && setsDone(r) > 0), text: 'Fais ta première séance', go: '#/', label: 'Séance ›' },
     { done: body.some(b => b.poids != null) && body.some(b => MEASURES.some(m => b[m.key] != null)), text: 'Note ta première pesée et tes mensurations', go: null, label: 'Corps ›' },
@@ -2243,6 +2282,7 @@ function render() {
     case 'rappel': return viewReminder();
     case 'objectifs': return viewGoals();
     case 'cibles': return viewGoalSettings();
+    case 'programme': return viewProgramChoice();
     default: return viewHome();
   }
 }
@@ -2263,6 +2303,7 @@ function parentPage(hash) {
   if (hash.startsWith('#/historique/')) return '#/historique';
   if (hash.startsWith('#/ex/')) return exFrom.startsWith('#/seance/') ? exFrom : '#/historique/exercices';
   if (hash === '#/withings') return '#/sources';
+  if (hash === '#/programme') return '#/objectifs';
   if (['#/repos', '#/sync', '#/sauvegarde', '#/sources', '#/rappel', '#/cibles'].includes(hash)) return '#/reglages';
   return null;
 }

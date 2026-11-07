@@ -355,3 +355,4 @@ td.reps { white-space: nowrap; }
 td.reps select.mode { width: 104px; margin-bottom: 4px; }
 td.reps .rgl { display: flex; align-items: center; gap: 3px; margin-top: 3px; }
 td.reps .rgl small { width: 20px; color: var(--muted); font-size: 11px; }
+select.tplsel { max-width: 220px; }
