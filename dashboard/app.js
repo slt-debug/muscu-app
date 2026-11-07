@@ -7,7 +7,7 @@
 // On recharge alors une fois tous les fichiers en contournant le cache ; sinon, message plutôt que page blanche.
 (() => {
   const ok = typeof rangeAt === 'function' && typeof perSetPlan === 'function' && typeof SET_MODES !== 'undefined'
-    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined';
+    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function';
   const FLAG = 'muscu.dash.refetch';
   let tried = false;
   try { tried = sessionStorage.getItem(FLAG) === '1'; if (ok) sessionStorage.removeItem(FLAG); else sessionStorage.setItem(FLAG, '1'); } catch { /* stockage indisponible */ }
@@ -122,9 +122,20 @@ function overlayPending() {
     if (!data[k][id] || rec.updatedAt >= (data[k][id].updatedAt || 0)) data[k][id] = rec;
   }
 }
+// Accès réservé (access.js) : compte GitHub du jeton vérifié à chaque ouverture du dashboard.
+let refusedLogin = null;
+function viewRefused() {
+  document.body.classList.add('logged-out');
+  mount(h('div', { class: 'card login' },
+    h('h2', {}, '🔒 Dashboard réservé'),
+    h('p', { class: 'sub' }, 'Le compte GitHub ', h('b', {}, refusedLogin), ' n\'est pas sur la liste des personnes autorisées. Demande l\'accès à la personne qui t\'a donné l\'appli.'),
+    h('button', { class: 'btn secondary', onclick: () => { refusedLogin = null; storeDcfg({ owner: dcfg.owner, repo: dcfg.repo }); acctBtn.hidden = true; viewLogin(); } }, 'Changer de compte')));
+}
 async function load() {
   setStatus('Chargement…');
   try {
+    const acc = await checkAccess(dcfg.token).catch(() => null); // réseau en erreur : la lecture des données dira pourquoi
+    if (acc && !acc.ok) { refusedLogin = acc.login; acctBtn.hidden = true; setStatus(''); return viewRefused(); }
     const [d, p, a, r, g, w] = await Promise.all([api('/api/data'), api('/api/programs').catch(() => null), api('/api/activity').catch(() => null), api('/api/reminders').catch(() => null),
       api('/api/goals').catch(() => null), api('/api/withings').catch(() => null)]);
     data = { sessions: d.sessions || {}, body: d.body || {} };
@@ -1495,7 +1506,11 @@ function viewLogin(msg) {
     const c = { owner: owner.value.trim(), repo: repo.value.trim(), token: token.value.trim() };
     if (!c.owner || !c.repo || !c.token) { err.textContent = 'Renseigne les trois champs.'; err.hidden = false; return; }
     btn.disabled = true; btn.textContent = 'Vérification…'; err.hidden = true;
-    try { await checkConnection(c); }
+    try {
+      const acc = await checkAccess(c.token);
+      if (!acc.ok) { refusedLogin = acc.login; storeDcfg({ owner: c.owner, repo: c.repo }); return viewRefused(); }
+      await checkConnection(c);
+    }
     catch (e) { err.textContent = cap(explainError(String(e.message || e))); err.hidden = false; btn.disabled = false; btn.textContent = 'Se connecter'; return; }
     storeDcfg(c); document.body.classList.remove('logged-out'); showAccount(); load();
   } },
@@ -1529,6 +1544,7 @@ acctBtn.addEventListener('click', ev => {
 document.addEventListener('click', ev => { if (!acctMenu.hidden && !acctMenu.contains(ev.target)) closeAccount(); });
 
 function render() {
+  if (refusedLogin) return viewRefused();
   if (!dcfgOk()) return viewLogin();
   const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   window.scrollTo(0, 0);

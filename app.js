@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '65 (choix du programme)';
+const APP_VERSION = '66 (accès réservé)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -1319,6 +1319,7 @@ async function syncNow(manual, forceWithings) {
   syncing = true; syncStartedAt = Date.now(); sync.state = 'busy'; refreshChips();
   let localChanged = false;
   try {
+    if (!(await verifyAccess())) throw new Error('compte non autorisé');
     await pullWithings(); // réglage « automatique » à jour avant l'import
     const wi = await withingsFetch(forceWithings === true, isManual);
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -1352,6 +1353,7 @@ async function syncNow(manual, forceWithings) {
   if (sync.state === 'ok') slog(`Terminé : ${sync.info}`);
   if (isManual) { sync.flashUntil = Date.now() + 2000; setTimeout(refreshChips, 2100); }
   refreshChips();
+  if (accessState() !== 'ok') return render(); // compte retiré de la liste : écran « Appli réservée »
   // Des données distantes sont arrivées : on redessine les vues de lecture (pas la séance en cours de saisie).
   // (la page Exercices garde sa recherche en cours : pas de redessin.)
   // (Corps n'est pas redessiné pendant une saisie dépliée : les champs en cours seraient perdus.)
@@ -2262,8 +2264,84 @@ function openRestSheet() {
 // ---------- Routage ----------
 function go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
 // Page d'où l'on a ouvert le détail d'un exercice (pour son lien de retour).
+// ---------- Accès réservé (access.js) ----------
+// L'appli ne s'ouvre qu'une fois le compte GitHub du jeton reconnu dans la liste. Le résultat est gardé sur le
+// téléphone (muscu.access) : l'appli marche ensuite hors ligne, la vérification est refaite à chaque synchro.
+// Un appareil déjà réglé avant ce contrôle reste ouvert jusqu'à sa première synchro, qui le vérifie.
+const ACKEY = 'muscu.access';
+let access = load(ACKEY, null);
+function accessState() {
+  if (access?.hash && !hashAllowed(access.hash)) return 'refused';
+  return cfgOk() ? 'ok' : 'setup';
+}
+// Vérifie le compte pendant une synchro. Faux seulement si GitHub répond et que le compte n'est pas sur la liste ;
+// réseau ou jeton en erreur : on laisse la synchro faire son travail (et afficher son erreur).
+async function verifyAccess() {
+  try {
+    const a = await checkAccess(cfg.token);
+    access = { login: a.login, hash: a.hash, at: Date.now() }; store(ACKEY, access);
+    if (!a.ok) slog(`Compte ${a.login} non autorisé`);
+    return a.ok;
+  } catch (e) { slog(`Accès non vérifié : ${e.message}`); return true; }
+}
+function viewGate(state) {
+  document.body.classList.add('gate');
+  if (state === 'refused') {
+    return mount(h('div', { class: 'gate-box' },
+      h('div', { class: 'gate-ic', 'aria-hidden': 'true' }, '🔒'),
+      h('h1', {}, 'Appli réservée'),
+      h('p', { class: 'sub' }, 'Le compte GitHub ', h('b', {}, access.login || '?'), ' n\'est pas sur la liste des personnes autorisées.'),
+      h('p', { class: 'sub' }, 'Si quelqu\'un t\'a donné cette appli, demande-lui de t\'ajouter, en lui donnant ton nom GitHub.'),
+      h('button', { class: 'btn secondary', onclick: () => {
+        access = null; store(ACKEY, null); cfg.token = ''; store(SKEY, cfg); sync.state = 'off'; render();
+      } }, 'Changer de compte')));
+  }
+  const inputs = {};
+  const f = (key, label, type, ph) => {
+    inputs[key] = h('input', { type, value: key === 'token' ? '' : cfg[key] || ({ path: 'data.json', repo: 'muscu-data' }[key] || ''), placeholder: ph, autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' });
+    return h('label', { class: 'field' }, h('span', {}, label), inputs[key]);
+  };
+  const msg = h('p', { class: 'form-msg', role: 'alert', hidden: true });
+  const say = t => { msg.textContent = t; msg.hidden = false; };
+  const btn = h('button', { class: 'btn', type: 'submit' }, 'Vérifier et commencer');
+  const form = h('form', { class: 'card', onsubmit: async ev => {
+    ev.preventDefault();
+    const c = Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value.trim()]));
+    if (!c.path) c.path = 'data.json';
+    if (!c.owner || !c.repo || !c.token) return say('Renseigne le compte, le dépôt et le jeton.');
+    btn.disabled = true; btn.textContent = 'Vérification…'; msg.hidden = true;
+    try {
+      const a = await checkAccess(c.token);
+      access = { login: a.login, hash: a.hash, at: Date.now() }; store(ACKEY, access);
+      if (!a.ok) return render(); // écran « Appli réservée », rien n'est enregistré
+      const r = await ghFetch(`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}`, { headers: { Authorization: `Bearer ${c.token}`, Accept: 'application/vnd.github+json' }, cache: 'no-store' });
+      if (r.status === 404) throw new Error('Dépôt introuvable : vérifie le compte et le nom du dépôt, et que le jeton y a accès.');
+      if (!r.ok) throw new Error(`GitHub ${r.status}`);
+      Object.assign(cfg, c); store(SKEY, cfg); sync.state = 'idle';
+      document.body.classList.remove('gate');
+      go('#/objectifs'); syncNow();
+    } catch (e) {
+      const m = String(e.message || e);
+      say(/GitHub 401/.test(m) ? 'Jeton refusé par GitHub : vérifie-le ou crée-en un nouveau.' : /^Dépôt/.test(m) ? m : `Vérification impossible, réessaie (${m}).`);
+      btn.disabled = false; btn.textContent = 'Vérifier et commencer';
+    }
+  } },
+    f('owner', 'Compte GitHub', 'text', 'ton nom d\'utilisateur'),
+    f('repo', 'Dépôt de données', 'text', 'muscu-data'),
+    f('path', 'Fichier', 'text', 'data.json'),
+    f('token', 'Jeton d\'accès', 'password', 'github_pat_…'),
+    msg, btn);
+  mount(
+    h('h1', {}, 'Bienvenue'),
+    h('p', { class: 'sub' }, 'Cette appli est réservée à un cercle privé. Connecte ton dépôt GitHub pour commencer : l\'appli vérifie que ton compte est autorisé.'),
+    form,
+    h('p', { class: 'sub' }, 'Pas encore de dépôt ? Le mode d\'emploi est sur ', h('a', { href: 'https://github.com/slt-debug/muscu-data-template', target: '_blank', rel: 'noopener' }, 'github.com/slt-debug/muscu-data-template'), '.'));
+}
 let lastHash = '', exFrom = '';
 function render() {
+  const st = accessState();
+  if (st !== 'ok') return viewGate(st);
+  document.body.classList.remove('gate');
   if (location.hash.startsWith('#/ex/') && !lastHash.startsWith('#/ex/')) exFrom = lastHash;
   lastHash = location.hash;
   const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
