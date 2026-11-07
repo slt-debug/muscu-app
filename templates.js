@@ -4,7 +4,7 @@
 // Fourchettes par série (mode, ranges) : voir program.js.
 const TEMPLATES = [
   {
-    id: 'ppl', label: 'Push / Pull / Jambes', desc: '3 séances + natation · top sets et pyramides',
+    id: 'ppl', label: 'Push / Pull / Leg', desc: '3 séances + natation · top sets et pyramides',
     days: { 1: 'Push', 3: 'Pull', 5: 'Jambes', 6: 'Natation' }, // getDay() : 0 = dimanche
     sessions: {
       'Push': [

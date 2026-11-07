@@ -193,7 +193,7 @@ const LIBRARY = {
   c_velo: { machine: 'Vélo', muscles: ['Cardio'], secondary: ['Quadriceps'], fw: '0798/stationary-bike-walk', yt: 'stationary bike steady state',
     steps: ['Selle réglée : genou légèrement fléchi en bas du coup de pédale.', 'Résistance modérée, rythme régulier.', 'Buste droit.'],
     errors: ['Selle trop basse.', 'Résistance trop faible.'], variants: ['c_marche'] },
-  // ---------- Ajouts du modèle Push / Pull / Jambes ----------
+  // ---------- Ajouts du modèle Push / Pull / Leg ----------
   c_dips: { machine: 'Barres parallèles', muscles: ['Bas des pectoraux'], secondary: ['Triceps', 'Avant d\'épaule'], yt: 'chest dips form lean forward',
     steps: ['En appui sur les barres, bras tendus, ceinture de lest si besoin.', 'Penche le buste en avant, jambes légèrement vers l\'arrière.', 'Descends jusqu\'à ce que les épaules passent un peu sous les coudes.', 'Remonte en poussant, sans verrouiller brutalement les coudes.'],
     errors: ['Buste droit : le travail passe aux triceps.', 'Descendre trop bas, épaules qui s\'enroulent vers l\'avant.'], variants: ['dips', 'c_presspec'] },
