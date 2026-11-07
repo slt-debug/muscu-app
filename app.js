@@ -2,7 +2,9 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '62 (cardio en minutes)';
+const APP_VERSION = '63 (textes Android)';
+// Quelques consignes diffèrent sur Android (installation, appli de pas).
+const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 const MOIS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
@@ -256,7 +258,7 @@ const TIMBRES = {
     prep: () => { tone(660, 0, 0.16, 0.3); tone(660, 0.22, 0.16, 0.3); },
     tick: () => tone(1200, 0, 0.06, 0.35, 'triangle'),
     end: () => { tone(880, 0, 0.16, 0.4); tone(988, 0.2, 0.16, 0.4); tone(1320, 0.4, 0.5, 0.45); } },
-  clair: { label: 'Clair', help: 'Bips aigus et tenus, dans la zone où le haut-parleur de l\'iPhone porte le mieux.',
+  clair: { label: 'Clair', help: 'Bips aigus et tenus, dans la zone où le haut-parleur d\'un téléphone porte le mieux.',
     min: () => tone(1568, 0, 0.15, 0.45, 'triangle', HOLD),
     prep: () => { tone(1976, 0, 0.13, 0.45, 'triangle', HOLD); tone(1976, 0.2, 0.13, 0.45, 'triangle', HOLD); },
     tick: () => tone(2637, 0, 0.05, 0.45, 'triangle', HOLD),
@@ -1683,7 +1685,8 @@ function manualStepsCard() {
       v == null ? h('span', { class: 'sub' }, 'pas encore saisis')
         : h('span', { class: v >= goal ? 'steps-ok' : 'sub' }, v >= goal ? '✓ objectif atteint' : `${fmtInt(goal - v)} sous l'objectif`)),
     editing ? [h('form', { class: 'step-in', onsubmit: e => { e.preventDefault(); save(); } }, inp, h('button', { class: 'btn small' }, 'OK')),
-      h('div', { class: 'sub' }, stepMsg || 'Le chiffre est dans l\'app Santé de l\'iPhone (Parcourir › Activité › Pas).')] : null,
+      h('div', { class: 'sub' }, stepMsg || (ANDROID ? 'Le chiffre est dans l\'appli de pas du téléphone ou de la montre (Google Fit, Samsung Health…).'
+        : 'Le chiffre est dans l\'app Santé de l\'iPhone (Parcourir › Activité › Pas).'))] : null,
     h('div', { class: 'stepbars' }, week.map(col), h('i', { style: `bottom:${goal / M * H}%` })),
     h('div', { class: 'stepdays' }, week.map((d, i) => h('span', { class: d === day ? 'today' : '' }, ['lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'][i]))));
 }
@@ -1748,7 +1751,7 @@ function viewWithings() {
     return mount(head,
       h('div', { class: 'card' },
         h('b', {}, 'Connecter la balance'),
-        h('div', { class: 'sub' }, 'Identifiants de ton application sur developer.withings.com. Ils restent sur cet iPhone.'),
+        h('div', { class: 'sub' }, 'Identifiants de ton application sur developer.withings.com. Ils restent sur ce téléphone.'),
         field('Client ID', id), field('Secret', secret),
         h('button', { class: 'btn', disabled: !cfgOk(), onclick: connect }, 'Se connecter à Withings'),
         cfgOk() ? h('div', { class: 'sub' }, 'Ouvre la page Withings : choisis le compte de la balance, accepte, l\'appli revient ici.')
@@ -1783,7 +1786,7 @@ function viewWithings() {
       cfgOk() ? msg : h('div', { class: 'sub' }, 'Configure d\'abord la synchronisation GitHub.')),
     h('div', { class: 'card' },
       h('div', { class: 'kvg' },
-        kv('État', 'Connectée sur cet iPhone'),
+        kv('État', 'Connectée sur ce téléphone'),
         l ? kv('Dernière pesée', `${whenTxt(l.withings.at)} · ${fmtKg(l.withings.poids)} kg${l.withings.mg != null ? ` · ${fmtKg(l.withings.mg)} %` : ''}`) : null,
         lastStep ? kv('Pas', `${fmtInt(activity.days[lastStep].pas)} le ${fmtDate(lastStep)}`) : null,
         wauth.lastImport ? kv('Dernier import', `${whenTxt(wauth.lastImport)} · ${importTxt(wauth.lastCount || 0, wauth.lastStepDays || 0)}`) : null,
@@ -2029,8 +2032,9 @@ function viewSettings() {
       navRow('#/rappel', '⌀', 'remind-ic', 'Rappel mensurations', remindSummary()),
       navRow('#/cibles', '◎', 'goal-ic', 'Objectifs', goalsSummary()),
       navRow('#/sauvegarde', saveIcon(), 'data', 'Sauvegarde', 'Exporter, importer')),
-    standalone ? null : [h('h2', {}, 'Installer sur l\'iPhone'),
-      h('p', { class: 'sub' }, 'Dans Safari : bouton Partager, puis « Sur l\'écran d\'accueil ». L\'appli s\'ouvrira ensuite en plein écran et fonctionnera sans réseau.')],
+    standalone ? null : [h('h2', {}, ANDROID ? 'Installer sur le téléphone' : 'Installer sur l\'iPhone'),
+      h('p', { class: 'sub' }, (ANDROID ? 'Dans Chrome : menu ⋮ en haut à droite, puis « Installer l\'application » (ou « Ajouter à l\'écran d\'accueil »).'
+        : 'Dans Safari : bouton Partager, puis « Sur l\'écran d\'accueil ».') + ' L\'appli s\'ouvrira ensuite en plein écran et fonctionnera sans réseau.')],
     h('h2', {}, 'À propos'),
     h('p', { class: 'sub' }, `Version ${APP_VERSION}`),
     h('p', { class: 'sub' }, (p => `${p.label}${p.from ? ` · depuis le ${fmtDate(p.from)}` : ''}`)(programFor(today()))),
