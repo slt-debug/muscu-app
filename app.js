@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '69 (objectif sous la fourchette)';
+const APP_VERSION = '70 (vitesse de marche)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -90,22 +90,24 @@ function bestE1rm(sets) {
   return w.length ? Math.max(...w.map(x => e1rm(x.kg, x.reps))) : null;
 }
 // Cardio (marche inclinée, vélo) : saisi en minutes, rangées dans reps (la charge reste 0) ; la marche inclinée
-// garde aussi sa pente (st.pente, en %). Pas de 1RM, pas de minuteur de repos, pas de record.
+// garde aussi sa pente (st.pente, en %) et sa vitesse (st.vitesse, en km/h). Pas de 1RM, pas de minuteur de repos, pas de record.
 const isCardio = ex => (ex.group || CATALOG.find(c => c.id === ex.id)?.group) === 'Cardio';
 const hasSlope = ex => !!CATALOG.find(c => c.id === ex.id)?.slope;
+const hasSpeed = ex => !!CATALOG.find(c => c.id === ex.id)?.speed;
 const cardioNote = ex => (ex.note || '').replace(/^Reps = minutes,?\s*/i, '');
 const cardioMinutes = sets => Math.max(0, ...sets.map(x => x.reps || 0));
 const cardioPente = sets => sets.map(x => x.pente).filter(v => v != null).pop() ?? null;
+const cardioVitesse = sets => sets.map(x => x.vitesse).filter(v => v != null).pop() ?? null;
 // Double progression : toutes les séries au haut de la fourchette => on monte la charge.
 // Cardio : une minute de plus à chaque séance, jusqu'au haut de la fourchette.
 function suggest(ex, excludeId) {
   const hist = exHistory(ex.id, excludeId);
   if (isCardio(ex)) {
     const last = hist[hist.length - 1];
-    if (!last) return { kg: 0, reps: ex.lo, pente: null, text: `Première fois : ${ex.lo} min${hasSlope(ex) ? ', note la pente du tapis' : ''}.` };
-    const mins = cardioMinutes(last.sets), pente = cardioPente(last.sets), target = Math.min(ex.hi, mins + 1);
-    const done = `Dernière fois (${fmtDate(last.date)}) : ${mins} min${pente != null ? `, pente ${fmtKg(pente)} %` : ''}.`;
-    return { kg: 0, reps: Math.max(target, mins), pente, text: mins >= ex.hi ? `${done} Durée maximale atteinte : garde ${ex.hi} min.` : `${done} Objectif : ${target} min.` };
+    if (!last) return { kg: 0, reps: ex.lo, pente: null, vitesse: null, text: `Première fois : ${ex.lo} min${hasSlope(ex) ? `, note la pente${hasSpeed(ex) ? ' et la vitesse' : ''} du tapis` : ''}.` };
+    const mins = cardioMinutes(last.sets), pente = cardioPente(last.sets), vitesse = cardioVitesse(last.sets), target = Math.min(ex.hi, mins + 1);
+    const done = `Dernière fois (${fmtDate(last.date)}) : ${mins} min${pente != null ? `, pente ${fmtKg(pente)} %` : ''}${vitesse != null ? `, vitesse ${fmtKg(vitesse)} km/h` : ''}.`;
+    return { kg: 0, reps: Math.max(target, mins), pente, vitesse, text: mins >= ex.hi ? `${done} Durée maximale atteinte : garde ${ex.hi} min.` : `${done} Objectif : ${target} min.` };
   }
   if (perSet(ex)) {
     const last = hist[hist.length - 1], plan = perSetPlan(ex, last?.sets);
@@ -150,7 +152,7 @@ function sessionRec(date, name) {
 function entryFor(ex, rec, sug) {
   const entry = rec?.entries?.[ex.id];
   if (entry) return entry;
-  return { sets: Array.from({ length: ex.sets }, (_, i) => ({ kg: sug.sets?.[i]?.kg ?? sug.kg, reps: sug.sets?.[i]?.reps ?? sug.reps, rir: '', done: false, ...(sug.pente != null ? { pente: sug.pente } : {}) })) };
+  return { sets: Array.from({ length: ex.sets }, (_, i) => ({ kg: sug.sets?.[i]?.kg ?? sug.kg, reps: sug.sets?.[i]?.reps ?? sug.reps, rir: '', done: false, ...(sug.pente != null ? { pente: sug.pente } : {}), ...(sug.vitesse != null ? { vitesse: sug.vitesse } : {}) })) };
 }
 function commit(date, name, ex, entry) {
   const rec = sessionRec(date, name);
@@ -624,7 +626,11 @@ function viewSession(name, date) {
     if (!open) return card;
     card.append(h('div', { class: 'hint' }, sugs[ex.id].text));
     card.append(isCardio(ex)
-      ? h('div', { class: 'set cardio' + (hasSlope(ex) ? ' slope' : '') }, h('span'), h('span', { class: 'head' }, 'minutes'), hasSlope(ex) ? h('span', { class: 'head' }, 'pente %') : null, h('span'))
+      // Libellés communs à l'appli et au dashboard : Durée (min), Pente (%), Vitesse (km/h) ; sur deux lignes s'il y en a plusieurs.
+      ? (multi => h('div', { class: 'set cardio' + (hasSlope(ex) ? ' slope' : '') + (hasSpeed(ex) ? ' speed' : '') }, h('span'),
+        h('span', { class: 'head' }, 'Durée', multi ? h('br') : ' ', '(min)'),
+        hasSlope(ex) ? h('span', { class: 'head' }, 'Pente', h('br'), '(%)') : null,
+        hasSpeed(ex) ? h('span', { class: 'head' }, 'Vitesse', h('br'), '(km/h)') : null, h('span')))(hasSlope(ex) || hasSpeed(ex))
       : h('div', { class: 'set' + (perSet(ex) ? ' ps' : '') }, h('span'), h('span', { class: 'head' }, 'kg'), h('span', { class: 'head' }, 'reps'), h('span', { class: 'head' }, 'réserve'), h('span')));
     // Séries de la dernière séance de cet exercice : chaque valeur qui en diffère (même numéro de série)
     // s'affiche en orange avec l'écart, pour voir ce qui change et fait un éventuel record.
@@ -634,13 +640,15 @@ function viewSession(name, date) {
       const kgIn = h('input', { type: 'text', inputmode: 'decimal', value: st.kg == null ? '' : fmtKg(st.kg), 'aria-label': 'Charge en kg' });
       const repIn = h('input', { type: 'text', inputmode: 'numeric', value: st.reps == null ? '' : String(st.reps), 'aria-label': 'Répétitions' });
       const dKg = h('span', { class: 'dlt', 'aria-hidden': 'true' }), dReps = h('span', { class: 'dlt', 'aria-hidden': 'true' });
-      // Cardio : minutes (dans reps, la charge reste 0) et, pour la marche inclinée, la pente (st.pente).
-      const cardio = isCardio(ex), slope = cardio && hasSlope(ex);
-      if (cardio) repIn.setAttribute('aria-label', 'Minutes');
+      // Cardio : minutes (dans reps, la charge reste 0) et, pour la marche inclinée, la pente (st.pente) et la vitesse (st.vitesse).
+      const cardio = isCardio(ex), slope = cardio && hasSlope(ex), speed = cardio && hasSpeed(ex);
+      if (cardio) repIn.setAttribute('aria-label', 'Durée en minutes');
       const penteIn = slope ? h('input', { type: 'text', inputmode: 'numeric', value: st.pente == null ? '' : String(st.pente), 'aria-label': 'Pente en %' }) : null;
       const dPente = h('span', { class: 'dlt', 'aria-hidden': 'true' });
+      const vitIn = speed ? h('input', { type: 'text', inputmode: 'decimal', value: st.vitesse == null ? '' : fmtKg(st.vitesse), 'aria-label': 'Vitesse en km/h' }) : null;
+      const dVit = h('span', { class: 'dlt', 'aria-hidden': 'true' });
       const markDiff = () => {
-        for (const [input, d, key] of [[kgIn, dKg, 'kg'], [repIn, dReps, 'reps'], ...(penteIn ? [[penteIn, dPente, 'pente']] : [])]) {
+        for (const [input, d, key] of [[kgIn, dKg, 'kg'], [repIn, dReps, 'reps'], ...(penteIn ? [[penteIn, dPente, 'pente']] : []), ...(vitIn ? [[vitIn, dVit, 'vitesse']] : [])]) {
           const v = num(input.value), ref = prevSets[i]?.[key];
           const diff = v != null && ref != null ? Math.round((v - ref) * 100) / 100 : 0;
           input.classList.toggle('chg', !!diff);
@@ -655,10 +663,11 @@ function viewSession(name, date) {
       kgIn.addEventListener('change', () => { st.kg = num(kgIn.value); save1(); markDiff(); });
       repIn.addEventListener('change', () => { st.reps = num(repIn.value); save1(); markDiff(); });
       if (penteIn) penteIn.addEventListener('change', () => { st.pente = num(penteIn.value); save1(); markDiff(); });
+      if (vitIn) vitIn.addEventListener('change', () => { st.vitesse = num(vitIn.value); save1(); markDiff(); });
       const bump = (input, key, delta, min) => () => {
         const cur = num(input.value) ?? (key === 'kg' ? (ex.kg ?? 0) : 0);
         const nv = Math.max(min, Math.round((cur + delta) * 100) / 100);
-        st[key] = nv; input.value = key === 'kg' ? fmtKg(nv) : String(nv); save1(); markDiff(); clearWarn();
+        st[key] = nv; input.value = key === 'kg' || key === 'vitesse' ? fmtKg(nv) : String(nv); save1(); markDiff(); clearWarn();
       };
       const rir = h('select', { class: 'rir', 'aria-label': 'Répétitions en réserve' },
         ['', '0', '1', '2', '3', '4'].map(v => h('option', { value: v, selected: String(st.rir) === v }, v === '' ? '–' : v)));
@@ -666,6 +675,7 @@ function viewSession(name, date) {
       const chk = h('button', { class: 'check' + (st.done ? ' on' : ''), 'aria-label': 'Série faite', onclick: () => {
         st.kg = cardio ? 0 : num(kgIn.value); st.reps = num(repIn.value);
         if (penteIn) st.pente = num(penteIn.value);
+        if (vitIn) st.vitesse = num(vitIn.value);
         st.done = !st.done;
         if (st.done && !(st.reps > 0 && st.kg != null)) {
           st.done = false;
@@ -701,8 +711,9 @@ function viewSession(name, date) {
       const [lo, hi] = rangeAt(ex, i), lastDone = devs[i] < 0 && i + 1 < entry.sets.length && !entry.sets[i + 1].done && entry.sets.slice(0, i + 1).every(x => x.done);
       const devMsg = lastDone ? h('div', { class: 'dev-msg' }, `↓ ${st.reps} reps, sous la fourchette ${rangeTxt([lo, hi])}. Si c'est la charge, baisse-la d'un cran ou touche « Lourd ».`) : null;
       card.append(cardio
-        ? h('div', { class: 'set cardio' + (slope ? ' slope' : '') }, h('span', { class: 'n' }, i + 1), repStep,
-          slope ? h('div', { class: 'stepper' }, h('button', { onclick: bump(penteIn, 'pente', -1, 0) }, '−'), h('div', { class: 'val' }, penteIn, dPente), h('button', { onclick: bump(penteIn, 'pente', 1, 0) }, '+')) : null, chk)
+        ? h('div', { class: 'set cardio' + (slope ? ' slope' : '') + (speed ? ' speed' : '') }, h('span', { class: 'n' }, i + 1), repStep,
+          slope ? h('div', { class: 'stepper' }, h('button', { onclick: bump(penteIn, 'pente', -1, 0) }, '−'), h('div', { class: 'val' }, penteIn, dPente), h('button', { onclick: bump(penteIn, 'pente', 1, 0) }, '+')) : null,
+          speed ? h('div', { class: 'stepper' }, h('button', { onclick: bump(vitIn, 'vitesse', -0.5, 0) }, '−'), h('div', { class: 'val' }, vitIn, dVit), h('button', { onclick: bump(vitIn, 'vitesse', 0.5, 0) }, '+')) : null, chk)
         // Fourchettes par série : celle de la série s'affiche sous son numéro.
         : h('div', { class: 'set' + (perSet(ex) ? ' ps' : '') },
           h('span', { class: 'n' }, i + 1, perSet(ex) ? h('small', { class: 'rg' }, rangeTxt(rangeAt(ex, i))) : null, flag),
@@ -1079,8 +1090,9 @@ function viewExercise(exId) {
   const back = exFrom.startsWith('#/seance/') ? h('a', { href: exFrom }, '‹ Séance') : h('a', { href: '#/historique/exercices' }, '‹ Exercices');
   if (isCardio(ex)) return mount(back, h('h1', {}, ex.name), h('div', { class: 'sub' }, 'Minutes par séance'), cardioBars(hist),
     hist.length ? h('details', { open: true }, h('summary', {}, 'Détail des séances'),
-      h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'Minutes'), hasSlope(ex) ? h('th', {}, 'Pente') : null),
-        [...hist].reverse().map(x => { const p = cardioPente(x.sets); return h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, String(cardioMinutes(x.sets))), hasSlope(ex) ? h('td', {}, p != null ? `${fmtKg(p)} %` : '–') : null); }))) : null);
+      h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'Durée (min)'), hasSlope(ex) ? h('th', {}, 'Pente (%)') : null, hasSpeed(ex) ? h('th', {}, 'Vitesse (km/h)') : null),
+        [...hist].reverse().map(x => { const p = cardioPente(x.sets), v = cardioVitesse(x.sets); return h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, String(cardioMinutes(x.sets))),
+          hasSlope(ex) ? h('td', {}, p != null ? fmtKg(p) : '–') : null, hasSpeed(ex) ? h('td', {}, v != null ? fmtKg(v) : '–') : null); }))) : null);
   const pts = hist.map(x => ({ t: parseYmd(x.date).getTime(), v: bestE1rm(x.sets), label: x.sets.map(s2 => `${fmtKg(s2.kg)}×${s2.reps}`).join(' ') })).filter(p => p.v != null);
   mount(
     // Ouvert depuis une séance ou depuis la liste des exercices : on revient d'où l'on vient.

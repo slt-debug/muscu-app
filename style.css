@@ -391,6 +391,8 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 /* Cardio : minutes (et pente pour la marche inclinée), barres « minutes par séance » */
 .set.cardio { grid-template-columns: 14px 1fr 44px; }
 .set.cardio.slope { grid-template-columns: 14px 1fr 1fr 44px; }
+.set.cardio.slope.speed { grid-template-columns: 14px 1fr 1fr 1fr 40px; }
+.set.cardio .head { line-height: 1.2; }
 .mbars { display: flex; gap: 5px; height: 130px; align-items: flex-end; margin-top: 10px; }
 .mbars .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; min-width: 0; }
 .mbars .col span { width: 100%; border-radius: 4px 4px 0 0; background: var(--series-1, var(--accent)); }

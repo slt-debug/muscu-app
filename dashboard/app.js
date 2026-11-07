@@ -676,7 +676,19 @@ function viewSessionEdit(id) {
     comment.addEventListener('change', () => { const t = comment.value.trim(); if (t) entry.comment = t; else delete entry.comment; save(); });
     const prevRec = liveSessions().filter(r => r.date < rec.date && r.entries?.[exId]).sort((a, b) => b.date.localeCompare(a.date))[0];
     const prevNote = prevRec?.entries[exId].comment?.trim() ? { date: prevRec.date, text: prevRec.entries[exId].comment.trim() } : null;
-    const rows = entry.sets.map((st, i) => {
+    // Cardio : Durée (min) dans reps (charge 0), plus Pente (%) et Vitesse (km/h) pour la marche ; mêmes libellés que l'iPhone.
+    const cd = ex && (ex.group || GROUP[exId]) === 'Cardio', cdSlope = cd && !!CATALOG.find(c => c.id === exId)?.slope, cdSpeed = cd && !!CATALOG.find(c => c.id === exId)?.speed;
+    const rows = cd ? entry.sets.map((st, i) => {
+      const field = (key, mode) => {
+        const inp = h('input', { class: 'n', value: st[key] == null ? '' : fmtKg(st[key]), inputmode: mode });
+        inp.addEventListener('change', () => { st[key] = num(inp.value); if (key === 'reps') st.kg = 0; save(); });
+        return h('td', {}, inp);
+      };
+      const done = h('input', { type: 'checkbox', checked: !!st.done });
+      done.addEventListener('change', () => { st.done = done.checked; if (st.kg == null) st.kg = 0; save(); });
+      return h('tr', {}, h('td', { class: 'sub' }, i + 1), field('reps', 'numeric'), cdSlope ? field('pente', 'numeric') : null, cdSpeed ? field('vitesse', 'decimal') : null, h('td', {}, done),
+        h('td', {}, h('button', { class: 'btn small secondary', title: 'Supprimer la série', onclick: () => { entry.sets.splice(i, 1); if (entry.sets.length) save(); else removeEx(); redraw(); } }, '×')));
+    }) : entry.sets.map((st, i) => {
       const kg = h('input', { class: 'n', value: st.kg == null ? '' : fmtKg(st.kg), inputmode: 'decimal' });
       const reps = h('input', { class: 'n', value: st.reps == null ? '' : String(st.reps), inputmode: 'numeric' });
       const rir = h('select', {}, ['', '0', '1', '2', '3', '4'].map(v => h('option', { value: v, selected: String(st.rir ?? '') === v }, v === '' ? '–' : v)));
@@ -694,7 +706,9 @@ function viewSessionEdit(id) {
     return h('div', { class: 'card ex' },
       h('h3', {}, ex ? ex.name : exId, ' ', h('span', {}, ex ? `${repsLabel(ex)}` : ''),
         swappedFrom[exId] ? h('span', { class: 'swaptag' }, `⇄ remplace ${exName(swappedFrom[exId])}`) : swaps[exId] ? h('span', { class: 'swaptag' }, `⇄ arrêté, suite avec ${exName(swaps[exId])}`) : null),
-      h('table', { class: 'sets' }, h('tr', {}, h('th', {}, '#'), h('th', {}, 'kg'), h('th', {}, 'reps'), h('th', {}, 'réserve'), h('th', {}, 'faite'), h('th', {})), rows),
+      h('table', { class: 'sets' }, cd
+        ? h('tr', {}, h('th', {}, '#'), h('th', {}, 'Durée (min)'), cdSlope ? h('th', {}, 'Pente (%)') : null, cdSpeed ? h('th', {}, 'Vitesse (km/h)') : null, h('th', {}, 'faite'), h('th', {}))
+        : h('tr', {}, h('th', {}, '#'), h('th', {}, 'kg'), h('th', {}, 'reps'), h('th', {}, 'réserve'), h('th', {}, 'faite'), h('th', {})), rows),
       h('div', { class: 'row', style: 'margin-top:8px;align-items:stretch' },
         h('button', { class: 'btn small secondary', onclick: () => { const l = entry.sets[entry.sets.length - 1]; entry.sets.push({ kg: l?.kg ?? null, reps: l?.reps ?? null, rir: '', done: true }); save(); redraw(); } }, '+ Série'),
         h('button', { class: 'btn small danger', onclick: () => { if (confirm('Supprimer cet exercice de la séance ?')) { removeEx(); redraw(); } } }, 'Retirer l\'exercice'),
@@ -725,7 +739,12 @@ function viewSessionEdit(id) {
     h('div', { class: 'row between' },
       h('h2', { style: 'margin:6px 0' }, `${rec.name}, ${fmtDateLong(rec.date)}`),
       h('button', { class: 'btn small danger', onclick: () => { if (confirm('Supprimer toute la séance ? Elle disparaîtra aussi de l\'iPhone.')) { rec.deleted = true; save(); location.hash = '#/seances'; } } }, 'Supprimer la séance')),
-    h('div', { class: 'sub' }, `${setsDone(rec)} séries validées, ${volume(rec).toLocaleString('fr-FR')} kg de volume. Les modifications partent vers l'iPhone à sa prochaine synchronisation.`),
+    // Bandeau : séries de muscu et volume sans le cardio, puis les minutes de cardio s'il y en a.
+    ((muscu, mins) => h('div', { class: 'sub' }, [
+      muscu ? `${muscu} série${muscu > 1 ? 's' : ''} validée${muscu > 1 ? 's' : ''}, ${volume(rec).toLocaleString('fr-FR')} kg de volume` : null,
+      mins ? `${mins} min de cardio` : null].filter(Boolean).join(', ') + '. Les modifications partent vers l\'iPhone à sa prochaine synchronisation.'))(
+      Object.entries(rec.entries || {}).filter(([x]) => (exDef(x)?.group || GROUP[x]) !== 'Cardio').reduce((n, [, e]) => n + doneSets(e).length, 0),
+      Object.entries(rec.entries || {}).filter(([x]) => (exDef(x)?.group || GROUP[x]) === 'Cardio').reduce((n, [, e]) => n + Math.max(0, ...doneSets(e).map(s => s.reps)), 0)),
     h('div', { class: 'row', style: 'margin-top:10px' },
       h('span', { class: 'sub' }, 'Début :'), startIn, h('span', { class: 'sub' }, 'Durée :'), durIn, h('span', { class: 'sub' }, 'min'),
       h('span', { class: 'sub' }, rec.clock?.start ? `(${fmtHour(rec.clock.start)} → ${fmtHour(clockEnd(rec))}${rec.clock.pauseMs ? `, pauses ${fmtMin(rec.clock.pauseMs)}` : ''})` : '(non chronométrée : saisis la durée pour l\'ajouter)')),
@@ -930,12 +949,14 @@ function showFicheModal(id) {
 }
 
 let exSearch = '';
-// Cardio (marche inclinée, vélo) : minutes rangées dans reps (charge 0), pente en % pour la marche (st.pente).
-// Même lecture que l'iPhone : minutes des 12 dernières séances en barres, total du mois, tableau date / minutes / pente.
+// Cardio (marche inclinée, vélo, natation) : minutes rangées dans reps (charge 0), pente en % (st.pente) et vitesse
+// en km/h (st.vitesse) pour la marche. Même lecture que l'iPhone : minutes des 12 dernières séances en barres, total
+// du mois, tableau Durée (min) / Pente (%) / Vitesse (km/h) (mêmes libellés que l'iPhone).
 const cardioMin = sets => Math.max(0, ...sets.map(x => x.reps || 0));
 const cardioPente = sets => sets.map(x => x.pente).filter(v => v != null).pop() ?? null;
+const cardioVitesse = sets => sets.map(x => x.vitesse).filter(v => v != null).pop() ?? null;
 function cardioBlock(id, hist) {
-  const slope = !!CATALOG.find(c => c.id === id)?.slope;
+  const slope = !!CATALOG.find(c => c.id === id)?.slope, speed = !!CATALOG.find(c => c.id === id)?.speed;
   const last = hist.slice(-12), mins = last.map(x => cardioMin(x.sets)), max = Math.max(...mins, 1);
   const month = today().slice(0, 7), inMonth = hist.filter(x => x.date.startsWith(month));
   const total = inMonth.reduce((a, x) => a + cardioMin(x.sets), 0);
@@ -944,8 +965,9 @@ function cardioBlock(id, hist) {
     h('div', { class: 'mbars', 'aria-label': `Minutes des ${last.length} dernières séances` }, last.map((x, i) => h('div', { class: 'col', title: `${fmtDate(x.date)} : ${mins[i]} min` }, h('b', {}, String(mins[i])), h('span', { style: `height:${Math.max(4, mins[i] / max * 80)}%` })))),
     h('div', { class: 'mdays' }, last.map(x => h('span', {}, fmtDate(x.date))))),
   h('div', { class: 'card', style: 'margin-top:12px' }, h('table', {},
-    h('tr', {}, h('th', {}, 'Date'), h('th', { class: 'num' }, 'Minutes'), slope ? h('th', { class: 'num' }, 'Pente') : null),
-    [...hist].reverse().map(x => { const p = cardioPente(x.sets); return h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', { class: 'num' }, String(cardioMin(x.sets))), slope ? h('td', { class: 'num' }, p != null ? `${fmtKg(p)} %` : '–') : null); })))];
+    h('tr', {}, h('th', {}, 'Date'), h('th', { class: 'num' }, 'Durée (min)'), slope ? h('th', { class: 'num' }, 'Pente (%)') : null, speed ? h('th', { class: 'num' }, 'Vitesse (km/h)') : null),
+    [...hist].reverse().map(x => { const p = cardioPente(x.sets), v = cardioVitesse(x.sets); return h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', { class: 'num' }, String(cardioMin(x.sets))),
+      slope ? h('td', { class: 'num' }, p != null ? fmtKg(p) : '–') : null, speed ? h('td', { class: 'num' }, v != null ? fmtKg(v) : '–') : null); })))];
 }
 function viewExercises(selected) {
   setTab('exercises');
