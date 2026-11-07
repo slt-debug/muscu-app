@@ -2,6 +2,25 @@
 /* Dashboard Muscu (page web) : lecture et modification des données de l'appli iPhone, directement dans
    le dépôt GitHub privé de données (data.js), avec le même jeton que l'iPhone. */
 
+// ---------- Fichiers partagés de la même version ----------
+// Le cache du navigateur peut mêler un ancien fichier partagé (program.js…) à cet app.js récent : la page plante.
+// On recharge alors une fois tous les fichiers en contournant le cache ; sinon, message plutôt que page blanche.
+(() => {
+  const ok = typeof rangeAt === 'function' && typeof perSetPlan === 'function' && typeof SET_MODES !== 'undefined'
+    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined';
+  const FLAG = 'muscu.dash.refetch';
+  let tried = false;
+  try { tried = sessionStorage.getItem(FLAG) === '1'; if (ok) sessionStorage.removeItem(FLAG); else sessionStorage.setItem(FLAG, '1'); } catch { /* stockage indisponible */ }
+  if (ok) return;
+  if (!tried) {
+    const urls = [location.href.split('#')[0], ...[...document.scripts].map(s => s.src), ...[...document.querySelectorAll('link[rel=stylesheet]')].map(l => l.href)].filter(Boolean);
+    Promise.all(urls.map(u => fetch(u, { cache: 'reload' }).catch(() => null))).then(() => location.reload());
+  } else {
+    document.getElementById('app').textContent = 'Mise à jour incomplète du dashboard : appuie sur Ctrl+F5 (ou Ctrl+Maj+R) pour recharger la page.';
+  }
+  throw new Error('Fichiers du dashboard de versions différentes');
+})();
+
 // ---------- Utilitaires ----------
 const app = document.getElementById('app');
 const statusEl = document.getElementById('status');
