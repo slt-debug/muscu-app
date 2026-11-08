@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '70 (vitesse de marche)';
+const APP_VERSION = '71 (écran allumé)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -379,9 +379,35 @@ function renderTimer() {
 setInterval(tickTimer, 100);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { tickTimer(); syncNow(); } });
 
+// Écran gardé allumé pendant une séance (icône soleil, réglage cfg.awake, activé par défaut).
+// L'iPhone annule la demande dès qu'on quitte l'appli : elle est refaite au retour sur l'écran de séance.
 let wakeLock = null;
-async function keepAwake() {
-  try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch { /* refusé */ }
+async function keepAwake(on = true) {
+  try {
+    if (on && navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
+    if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch { /* refusé */ }
+}
+const inSession = () => location.hash.startsWith('#/seance/');
+document.addEventListener('visibilitychange', () => { if (!document.hidden && inSession() && cfg.awake !== false) keepAwake(true); });
+window.addEventListener('hashchange', () => { if (!inSession()) keepAwake(false); });
+function awakeButton() {
+  const on = cfg.awake !== false;
+  return h('button', { class: 'awake' + (on ? ' on' : ''), 'aria-pressed': String(on), 'aria-label': on ? 'Écran toujours allumé : activé' : 'Écran toujours allumé : désactivé',
+    onclick: e => {
+      cfg.awake = !on; store(SKEY, cfg); keepAwake(cfg.awake);
+      e.currentTarget.replaceWith(awakeButton());
+      toast(cfg.awake ? 'L’écran reste allumé pendant la séance' : 'L’iPhone peut se mettre en veille');
+    } },
+    s('svg', { width: 22, height: 22, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'aria-hidden': 'true' },
+      s('circle', { cx: 12, cy: 12, r: 4 }), s('path', { d: 'M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4' })));
+}
+// Bandeau d'information de quelques secondes en bas de l'écran.
+function toast(text) {
+  let el = document.getElementById('toast');
+  if (!el) { el = h('div', { id: 'toast', role: 'status' }); document.body.append(el); }
+  el.textContent = text; el.hidden = false;
+  clearTimeout(toast.t); toast.t = setTimeout(() => { el.hidden = true; }, 2500);
 }
 
 // ---------- Graphiques ----------
@@ -596,7 +622,7 @@ function viewSession(name, date) {
   }
   list.push(...Object.keys(rec?.entries || {}).filter(x => !list.some(e => e.id === x) && EXERCISES[x]).map(x => EXERCISES[x]));
   if (!list.length) return go('#/');
-  keepAwake();
+  if (cfg.awake !== false) keepAwake(true);
   const total = list.reduce((n, ex) => n + ex.sets, 0);
   const sugs = Object.fromEntries(list.map(ex => [ex.id, suggest(ex, id)]));
   if (ui.openEx) { ui.active = ui.openEx; ui.openEx = null; } // lien « Voir la séance » d'un écart
@@ -769,7 +795,7 @@ function viewSession(name, date) {
     stopTimer(); redraw();
   };
   mount(
-    h('div', { class: 'row between' }, h('a', { href: '#/' }, '‹ Accueil'), syncChip()),
+    h('div', { class: 'row between' }, h('a', { href: '#/' }, '‹ Accueil'), h('div', { class: 'row' }, awakeButton(), syncChip())),
     h('h1', {}, name),
     h('div', { class: 'sub' }, `${cap(fmtDateLong(date))} · ${done}/${total} séries${rec ? ' · ' + sessionVolume(rec).toLocaleString('fr-FR') + ' kg de volume' : ''}`),
     h('div', { class: 'sclock' + (clockLive(rec) ? ' live' : '') },
