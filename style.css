@@ -8,6 +8,7 @@
   --axis: #c3c2b7;
   --series-1: #2a78d6;
   --series-2: #c8641a;
+  --goal-ink: #b85a0f;
   --accent: #2a78d6;
   --on-accent: #ffffff;
   --good: #006300;
@@ -29,6 +30,7 @@
     --axis: #383835;
     --series-1: #3987e5;
     --series-2: #e8903a;
+    --goal-ink: #e8903a;
     --accent: #3987e5;
     --good: #0ca30c;
     --warn: #e08a1e;
@@ -225,9 +227,9 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .chart .dot.raw { fill: var(--muted); }
 .chart .cross { stroke: var(--axis); stroke-width: 1; }
 /* Page Objectifs : ligne d'objectif, barres de pas, jauge « part du chemin » */
-.chart .target { stroke: var(--series-1); stroke-width: 1.2; stroke-dasharray: 4 4; }
-.chart text.target-l { fill: var(--ink-2); font-size: 10.5px; }
-.steps-chart .target { stroke: var(--ink-2); }
+.chart .target { stroke: var(--series-2); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.chart text.target-l { fill: var(--goal-ink); font-size: 10.5px; font-weight: 600; }
+.steps-chart .target { stroke: var(--series-2); }
 .steps-chart .bar { fill: var(--grid); }
 .steps-chart .bar.ok { fill: var(--good); opacity: .75; }
 .steps-chart .bar.now { opacity: .5; }
@@ -350,7 +352,7 @@ details summary { cursor: pointer; padding: 8px 0; color: var(--ink-2); }
 .stepbars span { width: 100%; border-radius: 3px 3px 0 0; background: var(--grid); }
 .stepbars .ok span { background: var(--good); opacity: .75; }
 .stepbars .col.empty span { height: 3px; opacity: .6; }
-.stepbars i { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--ink-2); }
+.stepbars i { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--series-2); }
 .stepdays { display: flex; gap: 5px; font-size: 11px; color: var(--muted); margin-top: 3px; }
 .stepdays span { flex: 1; text-align: center; }
 .stepbars .now span { background: repeating-linear-gradient(135deg, var(--grid) 0 4px, transparent 4px 8px); box-shadow: inset 0 0 0 1px var(--grid); opacity: 1; }

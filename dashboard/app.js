@@ -243,8 +243,8 @@ function lineChart(series, unit, title, W = 560, H = 240, opts = {}) {
   const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': title || 'Graphique' });
   for (const v of ticks) svg.append(s('line', { class: 'grid', x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) }), s('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, fmtKg(v)));
   svg.append(s('line', { class: 'axis', x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }));
-  if (opts.target != null) svg.append(s('line', { x1: m.l, x2: W - m.r, y1: Y(opts.target), y2: Y(opts.target), stroke: 'var(--series-1)', 'stroke-dasharray': '6 4', 'stroke-width': 1.5 }),
-    s('text', { x: W - m.r, y: Y(opts.target) - 5, 'text-anchor': 'end' }, `objectif ${fmtKg(opts.target)}`));
+  if (opts.target != null) svg.append(s('line', { x1: m.l, x2: W - m.r, y1: Y(opts.target), y2: Y(opts.target), stroke: 'var(--series-2)', 'stroke-dasharray': '6 4', 'stroke-width': 1.5 }),
+    s('text', { class: 'target-l', x: W - m.r, y: Y(opts.target) - 5, 'text-anchor': 'end' }, `objectif ${fmtKg(opts.target)}`));
   const dates = [...new Set(pts.map(p => p.t))].sort((a, b) => a - b);
   const xt = dates.length <= 3 ? dates : [dates[0], dates[Math.floor(dates.length / 3)], dates[Math.floor(dates.length * 2 / 3)], dates[dates.length - 1]];
   xt.forEach((t, i) => svg.append(s('text', { x: X(t), y: H - 9, 'text-anchor': i === 0 && xt.length > 1 ? 'start' : i === xt.length - 1 && xt.length > 1 ? 'end' : 'middle' }, fmtDate(ymd(new Date(t))))));
@@ -397,14 +397,14 @@ function stepsChart() {
     svg.append(s('rect', { x: X(i) - bw / 2, y: Y(v), width: bw, height: Y(0) - Y(v), rx: 3, fill: isToday ? 'url(#stepToday)' : v >= stepGoal() ? 'var(--h-in)' : 'var(--h-lo2)' },
       s('title', {}, `${fmtDate(d)} : ${fmtInt(v)} pas${isToday ? ' (en cours)' : v >= stepGoal() ? ' · objectif atteint' : ''}`)));
   });
-  svg.append(s('line', { x1: m.l, x2: W - m.r, y1: Y(stepGoal()), y2: Y(stepGoal()), stroke: 'var(--ink-2)', 'stroke-dasharray': '6 4', 'stroke-width': 1.5 }));
+  svg.append(s('line', { x1: m.l, x2: W - m.r, y1: Y(stepGoal()), y2: Y(stepGoal()), stroke: 'var(--series-2)', 'stroke-dasharray': '6 4', 'stroke-width': 1.5 }));
   const done = days.map((d, i) => [d, i]).filter(([d]) => d < today() && steps[d]);
   const avgPts = done.map(([d, i]) => { const win = done.filter(([e]) => e <= d && e > ymd(new Date(parseYmd(d).getTime() - 7 * 864e5))); return `${X(i)},${Y(win.reduce((a, [e]) => a + steps[e].pas, 0) / win.length)}`; });
   if (avgPts.length > 1) svg.append(s('polyline', { class: 'line', points: avgPts.join(' ') }));
   [0, 7, 14, 21, N - 1].forEach(i => svg.append(s('text', { x: X(i), y: H - 9, 'text-anchor': 'middle' }, i === N - 1 ? 'aujourd\'hui' : fmtDate(days[i]))));
   return h('div', { class: 'card chart' }, svg,
     h('div', { class: 'legend' }, h('span', {}, h('i', { style: 'background:var(--h-lo2)' }), 'sous l\'objectif'), h('span', {}, h('i', { style: 'background:var(--h-in)' }), 'objectif atteint'),
-      h('span', {}, h('i', { style: 'background:var(--series-1)' }), 'moyenne 7 jours'), h('span', {}, h('i', { style: 'background:transparent;border-top:2px dashed var(--ink-2);border-radius:0;height:0' }), `objectif ${fmtInt(stepGoal())}`)));
+      h('span', {}, h('i', { style: 'background:var(--series-1)' }), 'moyenne 7 jours'), h('span', {}, h('i', { style: 'background:transparent;border-top:2px dashed var(--series-2);border-radius:0;height:0' }), `objectif ${fmtInt(stepGoal())}`)));
 }
 function tile(label, value, sub, cls) { return h('div', { class: 'card' }, h('div', { class: 'sub' }, label), h('div', { class: 'big ' + (cls || '') }, value), h('div', { class: 'sub' }, sub)); }
 
