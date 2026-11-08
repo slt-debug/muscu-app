@@ -264,6 +264,8 @@ input[type=date] { width: 150px; }
 .ico.q { color: var(--accent); font-weight: 800; }
 @media (max-width: 900px) { .xlayout, .xtop { grid-template-columns: 1fr; } .xlist { position: static; max-height: 320px; } }
 /* Remplacement d'un exercice en séance (fait sur l'iPhone) */
+/* Exercice complémentaire ajouté hors programme (iPhone ou dashboard) : hors score d'adhérence */
+.extra-tag { display: inline-block; margin-left: 4px; font-size: 12px; font-weight: 700; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 6px; padding: 2px 7px; vertical-align: middle; }
 .swaptag { display: inline-block; margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 6px; padding: 2px 7px; vertical-align: middle; }
 .swapnote { display: block; color: var(--accent); }
 /* Balance Withings */

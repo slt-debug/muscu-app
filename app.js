@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '71 (écran allumé)';
+const APP_VERSION = '72 (exercices en complément)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -620,7 +620,9 @@ function viewSession(name, date) {
     if (k) list.push({ ...ex, sets: k, stoppedFor: to.name });
     list.push({ ...to, sets: Math.max(1, ex.sets - k), swapOf: ex });
   }
-  list.push(...Object.keys(rec?.entries || {}).filter(x => !list.some(e => e.id === x) && EXERCISES[x]).map(x => EXERCISES[x]));
+  // Exercices hors programme : compléments ajoutés pendant la séance (entry.extra) ou restes d'un ancien programme.
+  list.push(...Object.keys(rec?.entries || {}).filter(x => !list.some(e => e.id === x) && EXERCISES[x])
+    .map(x => rec.entries[x].extra ? { ...EXERCISES[x], extra: true } : EXERCISES[x]));
   if (!list.length) return go('#/');
   if (cfg.awake !== false) keepAwake(true);
   const total = list.reduce((n, ex) => n + ex.sets, 0);
@@ -644,7 +646,7 @@ function viewSession(name, date) {
     const nLo = devs.filter(d => d < 0).length, nHi = devs.filter(d => d > 0).length;
     const devTags = [nLo ? h('span', { class: 'dev-tag lo' }, `${nLo} hors fourchette`) : null, nHi ? h('span', { class: 'dev-tag hi' }, `${nHi} au-dessus`) : null];
     const head = h('button', { class: 'ex-head', onclick: () => { ui.active = open ? null : ex.id; redraw(); } },
-      h('div', { class: 'grow' }, h('h3', {}, ex.name, perSet(ex) ? h('span', { class: 'mode-tag' }, SET_MODES[ex.mode]) : null, prs[ex.id] ? h('span', { class: 'pr-tag' }, 'PR') : null, devTags), h('div', { class: 'sub' }, isCardio(ex) ? `${ex.lo === ex.hi ? ex.lo : `${ex.lo} à ${ex.hi}`} min${cardioNote(ex) ? ' · ' + cardioNote(ex) : ''}` : `${repsLabel(ex)}${ex.note ? ' · ' + ex.note : ''}`),
+      h('div', { class: 'grow' }, h('h3', {}, ex.name, ex.extra ? h('span', { class: 'extra-tag' }, '+ Complément') : null, perSet(ex) ? h('span', { class: 'mode-tag' }, SET_MODES[ex.mode]) : null, prs[ex.id] ? h('span', { class: 'pr-tag' }, 'PR') : null, devTags), h('div', { class: 'sub' }, isCardio(ex) ? `${ex.lo === ex.hi ? ex.lo : `${ex.lo} à ${ex.hi}`} min${cardioNote(ex) ? ' · ' + cardioNote(ex) : ''}` : `${repsLabel(ex)}${ex.note ? ' · ' + ex.note : ''}`),
         ex.swapOf ? h('span', { class: 'swaptag' }, `⇄ à la place de ${ex.swapOf.name}`) : ex.stoppedFor ? h('span', { class: 'swaptag' }, `⇄ arrêté, suite avec ${ex.stoppedFor}`) : null),
       h('span', { class: 'count' }, `${nDone}/${entry.sets.length}`));
     const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : ''), 'data-ex': ex.id },
@@ -756,7 +758,8 @@ function viewSession(name, date) {
       h('a', { class: 'btn secondary small tight', href: `#/ex/${ex.id}` }, 'Historique'),
       planned.includes(ex) && nDone < ex.sets ? h('button', { class: 'btn secondary small tight', onclick: () => openSwap(ex, id, list.map(e => e.id), to => {
         swapExercise(date, name, ex, to); ui.active = to; redraw();
-      }) }, '⇄ Remplacer') : null));
+      }) }, '⇄ Remplacer') : null,
+      ex.extra && !nDone ? h('button', { class: 'btn secondary small tight danger-txt', onclick: () => { removeExtra(date, name, ex.id); ui.active = undefined; redraw(); } }, 'Retirer') : null));
     // Commentaire libre de l'exercice pour cette séance : une ligne, qui s'agrandit pendant la saisie.
     // Enregistré à la sortie du champ (pas de redessin, pour ne pas perdre le clavier).
     const note = h('textarea', { class: 'ex-note', rows: 1, placeholder: '✎ Commentaire', 'aria-label': `Commentaire sur ${ex.name}` });
@@ -802,6 +805,10 @@ function viewSession(name, date) {
       h('div', { class: 't' }, h('span', { 'data-clock': id }, fmtClock(sessionDuration(rec))), h('small', {}, clockSub)),
       clockBtn),
     cards,
+    ended ? null : h('button', { class: 'btn add-ex', onclick: () => openAddExercise(id, list.map(e => e.id), name, exId => {
+      addExtra(date, name, exId); ui.active = exId; redraw();
+      document.querySelector(`[data-ex="${exId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }) }, '+ Ajouter un exercice'),
     done && !ended ? h('button', { class: 'btn end', style: 'margin-top:12px', onclick: finish }, '✓ Terminer la séance · ', h('span', { 'data-clock': id }, fmtClock(sessionDuration(rec)))) : null,
     ended ? h('div', { class: 'card', style: 'text-align:center;margin-top:12px' },
       h('b', {}, 'Séance terminée'),
@@ -911,6 +918,67 @@ function unswapExercise(date, name, ex, toId) {
   rec.swapsU = rec.updatedAt = now;
   save();
 }
+// Exercice complémentaire (hors programme, choisi dans le catalogue) : séries et fourchette du catalogue,
+// charges suggérées d'après l'historique. entry.extra le marque : hors score d'adhérence (program.js).
+function addExtra(date, name, exId) {
+  const ex = EXERCISES[exId], rec = sessionRec(date, name);
+  if (!ex || rec.entries[exId]) return;
+  const entry = entryFor(ex, null, suggest(ex, rec.id));
+  entry.extra = true;
+  commit(date, name, ex, entry);
+}
+// Retrait d'un complément tant qu'aucune série n'est validée (trace datée pour la fusion, merge.js).
+function removeExtra(date, name, exId) {
+  const rec = db.sessions[sessionId(date, name)];
+  if (!rec?.entries?.[exId] || doneSets(rec.entries[exId]).length) return;
+  const now = Date.now();
+  delete rec.entries[exId];
+  rec.removed = { ...rec.removed, [exId]: now };
+  rec.updatedAt = now;
+  save();
+}
+// Volet de choix d'un complément : recherche, filtre par groupe musculaire, dernière performance.
+function openAddExercise(sessionRecId, taken, sessionName, onPick) {
+  if (document.querySelector('.sheet-wrap')) return;
+  const close = () => wrap.remove();
+  const norm = t => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const groups = [...new Set(CATALOG.map(c => c.group).filter(Boolean))];
+  let group = '';
+  const option = c => {
+    const o = EXERCISES[c.id] || c, busy = taken.includes(c.id), hist = exHistory(c.id, sessionRecId), last = hist[hist.length - 1];
+    let perf = 'Jamais fait';
+    if (last) {
+      if (isCardio(o)) perf = `${fmtDate(last.date)} : ${cardioMinutes(last.sets)} min`;
+      else { const top = Math.max(...last.sets.map(x => x.kg)); perf = `${fmtDate(last.date)} : ${fmtKg(top)} kg × ${last.sets.filter(x => x.kg === top).map(x => x.reps).join(', ')}`; }
+    }
+    const plan = isCardio(o) ? `${o.lo === o.hi ? o.lo : `${o.lo} à ${o.hi}`} min` : repsLabel(o);
+    return h('button', { class: 'opt', disabled: busy, onclick: () => { close(); onPick(c.id); } },
+      h('b', {}, o.name), h('span', { class: 'm' }, [LIBRARY[c.id]?.machine, plan].filter(Boolean).join(' · ')),
+      h('span', { class: 'last' + (busy ? ' busy' : last ? '' : ' none') }, busy ? 'Déjà dans cette séance' : perf));
+  };
+  const search = h('input', { type: 'search', class: 'swapsearch', style: 'margin-top:10px', placeholder: `Chercher parmi les ${CATALOG.length} exercices`, oninput: () => fill() });
+  const chips = h('div', { class: 'addchips' });
+  const box = h('div');
+  const fill = () => {
+    chips.replaceChildren(...['', ...groups].map(g => h('button', { class: 'chipbtn' + (g === group ? ' on' : ''), 'aria-pressed': String(g === group), onclick: () => { group = g; fill(); } }, g || 'Tous')));
+    const q = norm(search.value.trim());
+    const found = CATALOG.filter(c => (!group || c.group === group) && (!q || norm(c.name).includes(q) || norm(LIBRARY[c.id]?.machine || '').includes(q)));
+    if (!found.length) { box.replaceChildren(h('p', { class: 'sub' }, 'Aucun exercice trouvé.')); return; }
+    box.replaceChildren(...(group || q ? found.map(option)
+      : groups.flatMap(g => { const of = found.filter(c => c.group === g); return of.length ? [h('div', { class: 'lbl' }, g), ...of.map(option)] : []; })));
+  };
+  fill();
+  const wrap = h('div', { class: 'sheet-wrap' },
+    h('div', { class: 'dim', onclick: close }),
+    h('div', { class: 'sheet swap', role: 'dialog', 'aria-label': 'Ajouter un exercice' },
+      h('span', { class: 'grab', 'aria-hidden': 'true' }),
+      h('h2', { style: 'margin:4px 0 2px' }, 'Ajouter un exercice'),
+      h('div', { class: 'sub' }, `En complément de ${sessionName} · hors score d'adhérence`),
+      search, chips, box,
+      h('button', { class: 'btn secondary', style: 'margin-top:10px', onclick: close }, 'Fermer')));
+  document.body.append(wrap);
+}
+
 // Choix du remplaçant : variantes de la fiche, puis même groupe musculaire, ou recherche dans tout le catalogue.
 function openSwap(ex, sessionRecId, taken, onPick) {
   if (document.querySelector('.sheet-wrap')) return;

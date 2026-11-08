@@ -142,6 +142,7 @@ function adherenceWeek(sessions, programFor, ws, upTo, todayStr, defs) {
   for (const r of recs) {
     const list = programFor(r.date).sessions[r.name] || [];
     for (const [exId, e] of Object.entries(r.entries || {})) {
+      if (e.extra) continue; // complément ajouté pendant la séance : hors score d'adhérence
       const ex = planEx(list, r, exId, defs);
       if (!ex || !(ex.hi > 0) || isCardioEx(ex)) continue;
       const out = { '-1': [], 1: [] };

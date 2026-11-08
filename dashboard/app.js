@@ -704,7 +704,7 @@ function viewSessionEdit(id) {
         h('td', {}, h('button', { class: 'btn small secondary', title: 'Supprimer la série', onclick: () => { entry.sets.splice(i, 1); if (entry.sets.length) save(); else removeEx(); redraw(); } }, '×')));
     });
     return h('div', { class: 'card ex' },
-      h('h3', {}, ex ? ex.name : exId, ' ', h('span', {}, ex ? `${repsLabel(ex)}` : ''),
+      h('h3', {}, ex ? ex.name : exId, ' ', entry.extra ? h('span', { class: 'extra-tag' }, '+ Complément') : null, h('span', {}, ex ? `${repsLabel(ex)}` : ''),
         swappedFrom[exId] ? h('span', { class: 'swaptag' }, `⇄ remplace ${exName(swappedFrom[exId])}`) : swaps[exId] ? h('span', { class: 'swaptag' }, `⇄ arrêté, suite avec ${exName(swaps[exId])}`) : null),
       h('table', { class: 'sets' }, cd
         ? h('tr', {}, h('th', {}, '#'), h('th', {}, 'Durée (min)'), cdSlope ? h('th', {}, 'Pente (%)') : null, cdSpeed ? h('th', {}, 'Vitesse (km/h)') : null, h('th', {}, 'faite'), h('th', {}))
@@ -750,7 +750,9 @@ function viewSessionEdit(id) {
       h('span', { class: 'sub' }, rec.clock?.start ? `(${fmtHour(rec.clock.start)} → ${fmtHour(clockEnd(rec))}${rec.clock.pauseMs ? `, pauses ${fmtMin(rec.clock.pauseMs)}` : ''})` : '(non chronométrée : saisis la durée pour l\'ajouter)')),
     blocks.length ? blocks : h('div', { class: 'card empty' }, 'Aucun exercice dans cette séance.'),
     h('div', { class: 'row', style: 'margin-top:14px' }, h('span', { class: 'sub' }, 'Ajouter un exercice :'), sel,
-      h('button', { class: 'btn small', onclick: () => { const ex = EXERCISES[sel.value]; if (!ex) return; rec.entries[ex.id] = { sets: Array.from({ length: ex.sets }, (_, i) => ({ kg: ex.kg, reps: rangeAt(ex, i)[0], rir: '', done: true })), u: Date.now() }; save(); redraw(); } }, 'Ajouter')));
+      h('button', { class: 'btn small', onclick: () => { const ex = EXERCISES[sel.value]; if (!ex) return; rec.entries[ex.id] = { sets: Array.from({ length: ex.sets }, (_, i) => ({ kg: ex.kg, reps: rangeAt(ex, i)[0], rir: '', done: true })), u: Date.now() };
+        // Hors programme de la séance : complément, comme sur l'iPhone (hors score d'adhérence).
+        if (!(programFor(rec.date).sessions[rec.name] || []).some(p => p.id === ex.id)) rec.entries[ex.id].extra = true; save(); redraw(); } }, 'Ajouter')));
 }
 
 // Mensurations suivies en plus du poids (mêmes clés que l'appli iPhone).

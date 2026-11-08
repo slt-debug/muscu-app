@@ -179,6 +179,13 @@ button.card.week { font: inherit; color: inherit; width: 100%; cursor: pointer; 
 .swap .opt .last.none { color: var(--muted); font-style: italic; }
 .swap .opt .last.busy { color: var(--warn); }
 .swap .opt:disabled { opacity: .55; cursor: default; }
+/* Exercice complémentaire : étiquette sur la carte, bouton d'ajout en pointillés, filtres par muscle du volet. */
+.extra-tag { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-size: 11px; font-weight: 700; vertical-align: 2px; }
+.btn.add-ex { margin-top: 12px; background: transparent; color: var(--accent); border: 2px dashed color-mix(in srgb, var(--accent) 45%, transparent); }
+.btn.danger-txt { color: var(--bad); }
+.addchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chipbtn { padding: 6px 11px; border-radius: 99px; border: 0; background: var(--field); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.chipbtn.on { background: var(--ink); color: var(--page); font-weight: 600; }
 .swapsearch { width: 100%; margin-top: 12px; padding: 10px 12px; border: 0; border-radius: 10px; background: var(--field); color: var(--ink); font: inherit; font-size: 16px; }
 .ex-head .count { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 14px; }
 .hint { font-size: 13px; color: var(--ink-2); margin: 8px 0 4px; }
