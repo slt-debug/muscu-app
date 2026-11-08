@@ -1,0 +1,13 @@
+# Données personnelles et secrets : jamais dans ce dépôt public
+data.json
+programs.json
+withings.json
+activity.json
+reminders.json
+goals.json
+notify-state.json
+config.json
+.env
+*.local.json
+CLAUDE.local.md
+node_modules/
