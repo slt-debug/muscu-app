@@ -47,17 +47,66 @@ const PROGRAM = {
 // ---------- Fourchettes par série (partagé par l'appli et le dashboard) ----------
 // mode 'top' : top set puis −10 % à chaque série (seule la 1re série fait monter la charge).
 // mode 'pyr' : pyramide, chaque série a sa charge et progresse seule.
+// mode 'perso' : une charge par répétition, loads = [[kg rep 1, kg rep 2, …], …] une liste par série (null = à saisir).
+//   Le nombre de charges donne le nombre de reps : ranges = [[n, n], …] suit loads (même contrôle d'écart que les autres).
+//   Pas de progression automatique : la séance reprend toujours les charges du programme.
 // ranges = [[lo, hi], …], une par série ; lo/hi restent la fourchette globale (anciennes versions, statistiques).
-const SET_MODES = { top: 'Top set', pyr: 'Pyramide' };
+const SET_MODES = { top: 'Top set', pyr: 'Pyramide', perso: 'Perso' };
 const perSet = ex => !!SET_MODES[ex.mode] && Array.isArray(ex.ranges) && ex.ranges.length > 0;
+const isPerso = ex => !!ex && ex.mode === 'perso' && Array.isArray(ex.loads) && ex.loads.length > 0;
+const loadsAt = (ex, i) => ex.loads[Math.min(i, ex.loads.length - 1)];
 function rangeAt(ex, i) {
   if (!perSet(ex)) return [ex.lo, ex.hi];
   return ex.ranges[Math.min(i, ex.ranges.length - 1)];
 }
 const rangeTxt = ([lo, hi]) => lo === hi ? String(lo) : `${lo}-${hi}`;
-const repsLabel = ex => perSet(ex)
-  ? Array.from({ length: ex.sets }, (_, i) => rangeTxt(rangeAt(ex, i))).join(' / ')
-  : `${ex.sets} × ${rangeTxt([ex.lo, ex.hi])}`;
+// Charges d'un exercice Perso : « 85 à 100 kg » (vide si aucune charge saisie).
+function persoKgTxt(ex) {
+  const all = ex.loads.flat().filter(v => typeof v === 'number');
+  if (!all.length) return '';
+  const lo = Math.min(...all), hi = Math.max(...all), f = n => String(n).replace('.', ',');
+  return lo === hi ? `${f(lo)} kg` : `${f(lo)} à ${f(hi)} kg`;
+}
+// « 3 × 6 reps », ou « 6 / 6 / 5 reps » si les séries n'ont pas le même nombre de reps.
+function persoRepsTxt(ex) {
+  const n = Array.from({ length: ex.sets }, (_, i) => loadsAt(ex, i).length);
+  return n.every(x => x === n[0]) ? `${ex.sets} × ${n[0]} reps` : `${n.join(' / ')} reps`;
+}
+function repsLabel(ex) {
+  if (isPerso(ex)) { const kg = persoKgTxt(ex); return persoRepsTxt(ex) + (kg ? `, ${kg}` : ''); }
+  return perSet(ex)
+    ? Array.from({ length: ex.sets }, (_, i) => rangeTxt(rangeAt(ex, i))).join(' / ')
+    : `${ex.sets} × ${rangeTxt([ex.lo, ex.hi])}`;
+}
+// Série saisie en mode Perso : st.loads (charge de chaque rep prévue) et st.reps (reps faites).
+// st.kg = la charge la plus lourde des reps faites (records, courbes) ; le volume additionne chaque rep.
+const _nums = a => a.filter(v => typeof v === 'number');
+function persoSync(st) {
+  if (!Array.isArray(st.loads)) return st;
+  const w = _nums(st.loads.slice(0, st.reps > 0 ? st.reps : st.loads.length));
+  st.kg = w.length ? Math.max(...w) : null;
+  return st;
+}
+function setVolume(x) {
+  if (Array.isArray(x.loads)) return _nums(x.loads.slice(0, x.reps)).reduce((a, b) => a + b, 0);
+  return x.kg * x.reps;
+}
+// Pour le 1RM estimé : en Perso, la charge la plus lourde et le nombre de reps faites à cette charge.
+function setBest(x) {
+  if (!Array.isArray(x.loads)) return { kg: x.kg, reps: x.reps };
+  const w = _nums(x.loads.slice(0, x.reps));
+  if (!w.length) return { kg: x.kg, reps: x.reps };
+  const kg = Math.max(...w);
+  return { kg, reps: w.filter(v => v === kg).length };
+}
+// Texte court d'une série : « 100×6 », ou en Perso « 90-100×6 ».
+function setTxt(x, fmt) {
+  if (Array.isArray(x.loads)) {
+    const w = _nums(x.loads.slice(0, x.reps));
+    if (w.length) { const lo = Math.min(...w), hi = Math.max(...w); return `${lo === hi ? fmt(hi) : `${fmt(lo)}-${fmt(hi)}`}×${x.reps}`; }
+  }
+  return `${fmt(x.kg)}×${x.reps}`;
+}
 const roundStep = (kg, step) => step > 0 ? Math.round(kg / step) * step : Math.round(kg * 10) / 10;
 // Charge pour revenir en bas de fourchette après des reps en dessous : 1RM d'Epley (kg × (1 + reps / 30)) ramené
 // à « target » reps, arrondi au cran inférieur et au moins un cran sous la charge faite, jamais sous 0.
@@ -69,6 +118,10 @@ function kgForReps(kg, reps, target, step) {
 // up[i] : la série i a atteint le haut de sa fourchette la dernière fois.
 function perSetPlan(ex, lastSets) {
   const sets = [], up = [];
+  if (isPerso(ex)) { // charges du programme, sans progression
+    for (let i = 0; i < ex.sets; i++) { const l = [...loadsAt(ex, i)]; sets.push(persoSync({ loads: l, reps: l.length })); up.push(false); }
+    return { sets, up };
+  }
   for (let i = 0; i < ex.sets; i++) {
     const [lo, hi] = rangeAt(ex, i), prev = lastSets?.[i];
     up.push(!!prev && prev.reps >= hi);

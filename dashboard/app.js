@@ -7,7 +7,7 @@
 // On recharge alors une fois tous les fichiers en contournant le cache ; sinon, message plutôt que page blanche.
 (() => {
   const ok = typeof rangeAt === 'function' && typeof perSetPlan === 'function' && typeof SET_MODES !== 'undefined'
-    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function' && typeof pingUsage === 'function' && typeof adherenceWeek === 'function' && typeof kgForReps === 'function';
+    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function' && typeof pingUsage === 'function' && typeof adherenceWeek === 'function' && typeof kgForReps === 'function' && typeof isPerso === 'function' && typeof setVolume === 'function';
   const FLAG = 'muscu.dash.refetch';
   let tried = false;
   try { tried = sessionStorage.getItem(FLAG) === '1'; if (ok) sessionStorage.removeItem(FLAG); else sessionStorage.setItem(FLAG, '1'); } catch { /* stockage indisponible */ }
@@ -187,7 +187,7 @@ const doneSets = e => (e?.sets || []).filter(x => x.done && x.reps > 0 && x.kg !
 const liveSessions = () => Object.values(data.sessions).filter(r => !r.deleted);
 const liveBody = () => Object.values(data.body).filter(b => !b.deleted).sort((a, b) => a.date.localeCompare(b.date));
 const setsDone = rec => Object.values(rec.entries || {}).reduce((n, e) => n + doneSets(e).length, 0);
-const volume = rec => Math.round(Object.values(rec.entries || {}).reduce((v, e) => v + doneSets(e).reduce((a, x) => a + x.kg * x.reps, 0), 0));
+const volume = rec => Math.round(Object.values(rec.entries || {}).reduce((v, e) => v + doneSets(e).reduce((a, x) => a + setVolume(x), 0), 0));
 // Chrono de séance, même règle que l'appli iPhone : rec.clock = { start, end, pauseMs, pausedAt } en ms.
 // Sans fin enregistrée, la séance s'arrête à la dernière série validée (sauf séance du jour en cours depuis moins de 30 min).
 function lastSetTime(rec) {
@@ -217,9 +217,9 @@ function loadIcon(kind, on, onclick) {
     svg, h('small', {}, up ? 'Léger' : 'Lourd'));
 }
 const loadTag = l => l === 'up' ? h('span', { class: 'tag up' }, '↑ Légère') : l === 'down' ? h('span', { class: 'tag down' }, '↓ Lourde') : '–';
-function bestE1rm(sets) { const w = sets.filter(x => x.kg > 0); return w.length ? Math.max(...w.map(x => e1rm(x.kg, x.reps))) : null; }
+function bestE1rm(sets) { const w = sets.filter(x => x.kg > 0); return w.length ? Math.max(...w.map(x => { const b = setBest(x); return e1rm(b.kg, b.reps); })) : null; }
 function e1rmPoints(exId) {
-  return history(exId).map(x => ({ t: parseYmd(x.date).getTime(), v: bestE1rm(x.sets), label: x.sets.map(z => `${fmtKg(z.kg)}×${z.reps}`).join(' ') })).filter(p => p.v != null);
+  return history(exId).map(x => ({ t: parseYmd(x.date).getTime(), v: bestE1rm(x.sets), label: x.sets.map(z => setTxt(z, fmtKg)).join(' ') })).filter(p => p.v != null);
 }
 function movingAvg(pts) {
   return pts.map(p => { const win = pts.filter(q => q.t <= p.t && q.t > p.t - 7 * 864e5); return { t: p.t, v: Math.round(win.reduce((a, q) => a + q.v, 0) / win.length * 10) / 10 }; });
@@ -689,12 +689,18 @@ function viewSessionEdit(id) {
       return h('tr', {}, h('td', { class: 'sub' }, i + 1), field('reps', 'numeric'), cdSlope ? field('pente', 'numeric') : null, cdSpeed ? field('vitesse', 'decimal') : null, h('td', {}, done),
         h('td', {}, h('button', { class: 'btn small secondary', title: 'Supprimer la série', onclick: () => { entry.sets.splice(i, 1); if (entry.sets.length) save(); else removeEx(); redraw(); } }, '×')));
     }) : entry.sets.map((st, i) => {
-      const kg = h('input', { class: 'n', value: st.kg == null ? '' : fmtKg(st.kg), inputmode: 'decimal' });
+      // Série Perso : la case kg liste la charge de chaque rep (« 100 100 95 »), kg = la plus lourde des reps faites.
+      const pl = Array.isArray(st.loads);
+      const kg = h('input', { class: 'n' + (pl ? ' loads' : ''), value: pl ? st.loads.map(v => v == null ? '–' : fmtKg(v)).join(' ') : st.kg == null ? '' : fmtKg(st.kg), inputmode: pl ? 'text' : 'decimal', title: pl ? 'Charge de chaque rep, séparées par des espaces' : '' });
       const reps = h('input', { class: 'n', value: st.reps == null ? '' : String(st.reps), inputmode: 'numeric' });
       const rir = h('select', {}, ['', '0', '1', '2', '3', '4'].map(v => h('option', { value: v, selected: String(st.rir ?? '') === v }, v === '' ? '–' : v)));
       const done = h('input', { type: 'checkbox', checked: !!st.done });
-      kg.addEventListener('change', () => { st.kg = num(kg.value); save(); });
-      reps.addEventListener('change', () => { st.reps = num(reps.value); save(); });
+      kg.addEventListener('change', () => {
+        if (pl) { const l = kg.value.trim().split(/\s+/).filter(Boolean).map(v => { const n = num(v); return n != null && n >= 0 ? n : null; }); if (l.length) st.loads = l; persoSync(st); }
+        else st.kg = num(kg.value);
+        save();
+      });
+      reps.addEventListener('change', () => { st.reps = num(reps.value); if (pl) persoSync(st); save(); });
       rir.addEventListener('change', () => { st.rir = rir.value; save(); });
       done.addEventListener('change', () => { st.done = done.checked; save(); });
       // Série validée hors de sa fourchette (setDev, program.js) : même flèche que sur l'iPhone.
@@ -710,7 +716,7 @@ function viewSessionEdit(id) {
         ? h('tr', {}, h('th', {}, '#'), h('th', {}, 'Durée (min)'), cdSlope ? h('th', {}, 'Pente (%)') : null, cdSpeed ? h('th', {}, 'Vitesse (km/h)') : null, h('th', {}, 'faite'), h('th', {}))
         : h('tr', {}, h('th', {}, '#'), h('th', {}, 'kg'), h('th', {}, 'reps'), h('th', {}, 'réserve'), h('th', {}, 'faite'), h('th', {})), rows),
       h('div', { class: 'row', style: 'margin-top:8px;align-items:stretch' },
-        h('button', { class: 'btn small secondary', onclick: () => { const l = entry.sets[entry.sets.length - 1]; entry.sets.push({ kg: l?.kg ?? null, reps: l?.reps ?? null, rir: '', done: true }); save(); redraw(); } }, '+ Série'),
+        h('button', { class: 'btn small secondary', onclick: () => { const l = entry.sets[entry.sets.length - 1]; entry.sets.push({ kg: l?.kg ?? null, reps: l?.reps ?? null, rir: '', done: true, ...(l?.loads ? { loads: [...l.loads] } : {}) }); save(); redraw(); } }, '+ Série'),
         h('button', { class: 'btn small danger', onclick: () => { if (confirm('Supprimer cet exercice de la séance ?')) { removeEx(); redraw(); } } }, 'Retirer l\'exercice'),
         comment,
         loadIcon('up', entry.load === 'up', () => { entry.load = entry.load === 'up' ? null : 'up'; save(); redraw(); }),
@@ -750,7 +756,7 @@ function viewSessionEdit(id) {
       h('span', { class: 'sub' }, rec.clock?.start ? `(${fmtHour(rec.clock.start)} → ${fmtHour(clockEnd(rec))}${rec.clock.pauseMs ? `, pauses ${fmtMin(rec.clock.pauseMs)}` : ''})` : '(non chronométrée : saisis la durée pour l\'ajouter)')),
     blocks.length ? blocks : h('div', { class: 'card empty' }, 'Aucun exercice dans cette séance.'),
     h('div', { class: 'row', style: 'margin-top:14px' }, h('span', { class: 'sub' }, 'Ajouter un exercice :'), sel,
-      h('button', { class: 'btn small', onclick: () => { const ex = EXERCISES[sel.value]; if (!ex) return; rec.entries[ex.id] = { sets: Array.from({ length: ex.sets }, (_, i) => ({ kg: ex.kg, reps: rangeAt(ex, i)[0], rir: '', done: true })), u: Date.now() };
+      h('button', { class: 'btn small', onclick: () => { const ex = EXERCISES[sel.value]; if (!ex) return; rec.entries[ex.id] = { sets: Array.from({ length: ex.sets }, (_, i) => isPerso(ex) ? persoSync({ loads: [...loadsAt(ex, i)], reps: loadsAt(ex, i).length, rir: '', done: true }) : ({ kg: ex.kg, reps: rangeAt(ex, i)[0], rir: '', done: true })), u: Date.now() };
         // Hors programme de la séance : complément, comme sur l'iPhone (hors score d'adhérence).
         if (!(programFor(rec.date).sessions[rec.name] || []).some(p => p.id === ex.id)) rec.entries[ex.id].extra = true; save(); redraw(); } }, 'Ajouter')));
 }
@@ -1004,7 +1010,7 @@ function viewExercises(selected) {
     : [ex.kg === 0 || !e1rmPoints(id).length ? h('div', { class: 'card empty' }, 'Exercice au poids du corps : pas de courbe de 1RM.') : lineChart([{ name: '1RM estimé', points: e1rmPoints(id) }], 'kg', '1RM estimé (formule d\'Epley, meilleure série)', 760, 260),
       h('div', { class: 'card', style: 'margin-top:12px' }, h('table', {},
         h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'Séries (kg × reps)'), h('th', {}, 'Charge'), h('th', { class: 'num' }, '1RM estimé')),
-        [...hist].reverse().map(x => h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, x.sets.map(z => `${fmtKg(z.kg)}×${z.reps}`).join('   ')), h('td', {}, loadTag(x.load)), h('td', { class: 'num' }, bestE1rm(x.sets) ? fmtKg(bestE1rm(x.sets)) : '–')))))];
+        [...hist].reverse().map(x => h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, x.sets.map(z => setTxt(z, fmtKg)).join('   ')), h('td', {}, loadTag(x.load)), h('td', { class: 'num' }, bestE1rm(x.sets) ? fmtKg(bestE1rm(x.sets)) : '–')))))];
   mount(h('div', { class: 'xlayout' },
     h('div', { class: 'card xlist' }, search, listBox),
     h('div', { class: 'xdetail' },
@@ -1066,14 +1072,15 @@ function exStatus(ex) {
 // cette charge, avec sa date (↑ si établi ces 30 derniers jours). PR visé = l'objectif que l'appli proposera à la
 // prochaine séance (double progression) s'il dépasse le record de charge, ou le record de reps à cette charge.
 function exRecord(ex, st) {
-  const sets = history(ex.id).flatMap(x => x.sets.map(y => ({ ...y, date: x.date }))).filter(x => x.kg > 0);
+  // Série Perso : la charge la plus lourde et les reps faites à cette charge (setBest, program.js).
+  const sets = history(ex.id).flatMap(x => x.sets.map(y => ({ ...y, ...setBest(y), date: x.date }))).filter(x => x.kg > 0);
   if (!sets.length) return null;
   const kg = Math.max(...sets.map(x => x.kg)), atMax = sets.filter(x => x.kg === kg);
   const reps = Math.max(...atMax.map(x => x.reps)), date = atMax.filter(x => x.reps === reps).map(x => x.date).sort()[0];
   const bestAt = k => Math.max(-1, ...sets.filter(x => x.kg === k).map(x => x.reps));
   let pr = null;
   if (st.st === 'up' && st.next > kg) pr = `${fmtKg(st.next)} kg`;
-  else if (st.st !== 'new') {
+  else if (st.st !== 'new' && !isPerso(ex)) { // Perso : pas de progression, donc pas de record de reps visé
     const sug = st.plan ? st.plan.sets.reduce((a, b) => (b.kg ?? -1) > (a.kg ?? -1) ? b : a) : st.st === 'up' || st.st === 'down' ? { kg: st.next, reps: ex.lo } : { kg: st.top, reps: Math.min(ex.hi, Math.min(...st.reps) + 1) };
     if (bestAt(sug.kg) >= 0 && sug.reps > bestAt(sug.kg)) pr = sug.kg === kg ? `× ${sug.reps}` : `${fmtKg(sug.kg)} kg × ${sug.reps}`;
   }
@@ -1208,7 +1215,7 @@ function viewProgram() {
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const rng = e => e.lo === e.hi ? String(e.lo) : `${e.lo}-${e.hi}`;
 const addDays = (str, n) => { const d = parseYmd(str); d.setDate(d.getDate() + n); return ymd(d); };
-const keptRanges = new Map();
+const keptRanges = new Map(), keptLoads = new Map();
 let editSession = null, applyOpen = false, replacing = null, histOpen = null, progSaveTimer = null;
 
 async function saveProgDoc() {
@@ -1355,12 +1362,34 @@ function viewProgramEdit() {
   };
   // Fourchettes : une seule (Identique) ou une par série (Top set, Pyramide) ; lo/hi suivent les extrêmes.
   // Repasser en « Identique » garde les fourchettes de côté (keptRanges) le temps de l'édition.
+  // Perso : une liste de charges par série (une case par rep) ; ranges = [[n, n]] suit le nombre de cases.
   const fixRanges = e => {
+    if (e.mode !== 'perso' && e.loads) { keptLoads.set(e.id, e.loads); delete e.loads; }
     if (!SET_MODES[e.mode]) { if (e.ranges) keptRanges.set(e.id, e.ranges); delete e.mode; delete e.ranges; return; }
-    const r = Array.isArray(e.ranges) && e.ranges.length ? e.ranges : keptRanges.get(e.id) || [[e.lo, e.hi]];
-    e.ranges = Array.from({ length: e.sets }, (_, i) => [...(r[i] || r[r.length - 1])]);
+    if (e.mode === 'perso') {
+      const n = Math.max(1, Math.min(30, e.hi || e.lo || 8));
+      const src = Array.isArray(e.loads) && e.loads.length ? e.loads : keptLoads.get(e.id) || [Array.from({ length: n }, () => e.kg ?? null)];
+      e.loads = Array.from({ length: e.sets }, (_, i) => [...(src[i] || src[src.length - 1])]);
+      e.ranges = e.loads.map(l => [l.length, l.length]);
+    } else {
+      const r = Array.isArray(e.ranges) && e.ranges.length ? e.ranges : keptRanges.get(e.id) || [[e.lo, e.hi]];
+      e.ranges = Array.from({ length: e.sets }, (_, i) => [...(r[i] || r[r.length - 1])]);
+    }
     e.lo = Math.min(...e.ranges.map(x => x[0])); e.hi = Math.max(...e.ranges.map(x => x[1]));
   };
+  // Case de charge d'une rep (Perso) : vide = à saisir en séance.
+  const loadIn = (e, i, j) => {
+    const b = baseEx(e.id), was = b && isPerso(b) ? loadsAt(b, i)?.[j] : undefined, cur = e.loads[i][j];
+    const inp = h('input', { class: 'ein n' + (cur !== was ? ' chg' : ''), value: cur == null ? '' : fmtKg(cur), placeholder: '–', title: `Série ${i + 1}, rep ${j + 1}`, 'aria-label': `Série ${i + 1}, rep ${j + 1}, kg`, style: 'width:42px' });
+    inp.addEventListener('change', () => { const v = num(inp.value); e.loads[i][j] = v != null && v >= 0 ? v : null; changed(); });
+    return inp;
+  };
+  const persoRows = e => [
+    h('div', { class: 'rgl pl' }, h('small', {}), ...Array.from({ length: Math.max(...e.loads.map(l => l.length)) }, (_, j) => h('small', { class: 'rh' }, `r${j + 1}`))),
+    ...e.loads.map((l, i) => h('div', { class: 'rgl pl' }, h('small', {}, `S${i + 1}`), ...l.map((_, j) => loadIn(e, i, j)),
+      h('button', { class: 'btn small secondary', title: 'Ajouter une rep (reprend la charge de la case précédente)', disabled: l.length >= 30, onclick: () => { l.push(l[l.length - 1] ?? null); fixRanges(e); changed(); } }, '+ rep'),
+      h('button', { class: 'btn small secondary', title: 'Retirer la dernière rep', disabled: l.length <= 1, onclick: () => { l.pop(); fixRanges(e); changed(); } }, '− rep'))),
+  ];
   const rangeIn = (e, i, j) => {
     const b = baseEx(e.id), was = b ? rangeAt(b, i)[j] : e.ranges[i][j], cur = e.ranges[i][j];
     const inp = h('input', { class: 'ein n' + (cur !== was || !perSet(b || {}) ? ' chg' : ''), value: cur, title: `Série ${i + 1}`, style: 'width:34px' });
@@ -1372,9 +1401,10 @@ function viewProgramEdit() {
     return inp;
   };
   const repsCell = e => {
-    const msel = h('select', { class: 'ein mode', title: 'Fourchette identique pour toutes les séries, ou une par série' },
+    const msel = h('select', { class: 'ein mode', title: 'Fourchette identique pour toutes les séries, une par série (Top set, Pyramide), ou une charge par rep (Perso)' },
       [['', 'Identique'], ...Object.entries(SET_MODES)].map(([v, l]) => h('option', { value: v, selected: (e.mode || '') === v }, l)));
     msel.addEventListener('change', () => { if (msel.value) e.mode = msel.value; else delete e.mode; fixRanges(e); changed(); });
+    if (isPerso(e)) return [msel, ...persoRows(e)];
     return [msel, perSet(e) ? e.ranges.map((_, i) => h('div', { class: 'rgl' }, h('small', {}, `S${i + 1}`), rangeIn(e, i, 0), '–', rangeIn(e, i, 1)))
       : h('div', { class: 'rgl' }, field(e, 'lo', { w: 40 }), '–', field(e, 'hi', { w: 40 }))];
   };
@@ -1415,7 +1445,7 @@ function viewProgramEdit() {
       h('td', { class: 'reps' }, repsCell(e)),
       h('td', {}, field(e, 'rest', { w: 44 })),
       h('td', {}, field(e, 'step', { w: 42 })),
-      h('td', {}, field(e, 'kg', { w: 44, ph: '–' })),
+      h('td', {}, isPerso(e) ? h('span', { class: 'sub', style: 'font-style:italic' }, 'par rep') : field(e, 'kg', { w: 44, ph: '–' })),
       h('td', {}, field(e, 'note', { w: 90, ph: 'consigne' })),
       h('td', { class: 'acts' },
         h('button', { class: 'ico', title: 'Remplacer par un autre exercice (nouvel historique)', onclick: () => { replacing = e.id; redraw(); } }, '⇄'),

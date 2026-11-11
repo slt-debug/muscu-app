@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '73 (lignes d\'objectif en orange)';
+const APP_VERSION = '74 (mode Perso : une charge par rep)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -87,7 +87,7 @@ function exHistory(exId, excludeId) {
 }
 function bestE1rm(sets) {
   const w = sets.filter(x => x.kg > 0);
-  return w.length ? Math.max(...w.map(x => e1rm(x.kg, x.reps))) : null;
+  return w.length ? Math.max(...w.map(x => { const b = setBest(x); return e1rm(b.kg, b.reps); })) : null;
 }
 // Cardio (marche inclinée, vélo) : saisi en minutes, rangées dans reps (la charge reste 0) ; la marche inclinée
 // garde aussi sa pente (st.pente, en %) et sa vitesse (st.vitesse, en km/h). Pas de 1RM, pas de minuteur de repos, pas de record.
@@ -108,6 +108,14 @@ function suggest(ex, excludeId) {
     const mins = cardioMinutes(last.sets), pente = cardioPente(last.sets), vitesse = cardioVitesse(last.sets), target = Math.min(ex.hi, mins + 1);
     const done = `Dernière fois (${fmtDate(last.date)}) : ${mins} min${pente != null ? `, pente ${fmtKg(pente)} %` : ''}${vitesse != null ? `, vitesse ${fmtKg(vitesse)} km/h` : ''}.`;
     return { kg: 0, reps: Math.max(target, mins), pente, vitesse, text: mins >= ex.hi ? `${done} Durée maximale atteinte : garde ${ex.hi} min.` : `${done} Objectif : ${target} min.` };
+  }
+  // Perso : charges du programme rep par rep, sans progression ; rappel des séries arrêtées la dernière fois.
+  if (isPerso(ex)) {
+    const last = hist[hist.length - 1], plan = perSetPlan(ex), out = { kg: plan.sets[0].kg, reps: plan.sets[0].reps, sets: plan.sets };
+    if (!last) return { ...out, text: 'Programme perso : charges du programme pré-remplies, rep par rep.' };
+    const stops = last.sets.map((x, i) => Array.isArray(x.loads) && x.reps < x.loads.length ? `série ${i + 1} arrêtée après la rep ${x.reps}` : null).filter(Boolean);
+    const n = last.sets.length;
+    return { ...out, text: `Programme perso. Dernière fois (${fmtDate(last.date)}) : ${stops.length ? stops.join(', ') : `${n} série${n > 1 ? 's' : ''} complète${n > 1 ? 's' : ''}`}.` };
   }
   if (perSet(ex)) {
     const last = hist[hist.length - 1], plan = perSetPlan(ex, last?.sets);
@@ -152,7 +160,7 @@ function sessionRec(date, name) {
 function entryFor(ex, rec, sug) {
   const entry = rec?.entries?.[ex.id];
   if (entry) return entry;
-  return { sets: Array.from({ length: ex.sets }, (_, i) => ({ kg: sug.sets?.[i]?.kg ?? sug.kg, reps: sug.sets?.[i]?.reps ?? sug.reps, rir: '', done: false, ...(sug.pente != null ? { pente: sug.pente } : {}), ...(sug.vitesse != null ? { vitesse: sug.vitesse } : {}) })) };
+  return { sets: Array.from({ length: ex.sets }, (_, i) => ({ kg: sug.sets?.[i]?.kg ?? sug.kg, reps: sug.sets?.[i]?.reps ?? sug.reps, rir: '', done: false, ...(sug.sets?.[i]?.loads ? { loads: [...sug.sets[i].loads] } : {}), ...(sug.pente != null ? { pente: sug.pente } : {}), ...(sug.vitesse != null ? { vitesse: sug.vitesse } : {}) })) };
 }
 function commit(date, name, ex, entry) {
   const rec = sessionRec(date, name);
@@ -164,7 +172,7 @@ function commit(date, name, ex, entry) {
 }
 function sessionVolume(rec) {
   let v = 0;
-  for (const e of Object.values(rec.entries || {})) for (const x of doneSets(e)) v += x.kg * x.reps;
+  for (const e of Object.values(rec.entries || {})) for (const x of doneSets(e)) v += setVolume(x);
   return Math.round(v);
 }
 function setsDone(rec) {
@@ -604,6 +612,51 @@ function viewHome() {
     ui.homeAdh ? adherenceDetails(adh) : null);
 }
 
+// Série en mode Perso : une case de charge par rep (pré-remplie d'après le programme), « Reps faites »
+// pour une série arrêtée avant la fin, une validation par série. Série validée : cases figées, « Modifier » la rouvre.
+function persoSetBlock(ex, entry, st, i, dev, save1, onValidated, redraw) {
+  if (!Array.isArray(st.loads)) st.loads = isPerso(ex) && loadsAt(ex, i) ? [...loadsAt(ex, i)] : Array.from({ length: st.reps || 1 }, () => st.kg ?? null);
+  const n = st.loads.length, made = st.done ? Math.min(n, st.reps || n) : n;
+  const status = st.done ? (st.reps < n ? h('span', { class: 'st lo' }, `↓ arrêtée après la rep ${st.reps}`) : h('span', { class: 'st ok' }, '✓ complète')) : h('span', { class: 'st' }, 'à faire');
+  const headRow = h('div', { class: 'pset-head' }, h('b', {}, `Série ${i + 1}`), status,
+    st.done ? h('button', { class: 'linkbtn', onclick: () => { st.done = false; delete st.t; save1(); redraw(); } }, 'Modifier') : null);
+  const grid = h('div', { class: 'pset-grid', style: `grid-template-columns:repeat(${Math.min(n, 6)}, minmax(0, 1fr))` });
+  const inputs = [];
+  if (!st.done) {
+    st.loads.forEach((v, j) => {
+      const inp = h('input', { type: 'text', inputmode: 'decimal', value: v == null ? '' : fmtKg(v), 'aria-label': `Série ${i + 1}, rep ${j + 1}, kg`, placeholder: 'kg' });
+      inp.addEventListener('input', () => inp.classList.remove('err'));
+      inp.addEventListener('change', () => { st.loads[j] = num(inp.value); persoSync(st); save1(); });
+      inputs.push(inp);
+      grid.append(h('label', { class: 'pcell' }, h('small', {}, `r${j + 1}`), inp));
+    });
+  } else {
+    st.loads.forEach((v, j) => grid.append(h('span', { class: 'pcell val' + (j >= made ? ' off' : '') }, v == null ? '–' : fmtKg(v))));
+  }
+  const block = h('div', { class: 'pset' + (st.done ? ' done' : '') }, headRow, grid);
+  if (st.done) return block;
+  const sel = h('select', { 'aria-label': `Reps faites, série ${i + 1}` },
+    [h('option', { value: String(n), selected: !(st.reps > 0 && st.reps < n) }, `Série complète (${n})`),
+      ...Array.from({ length: n - 1 }, (_, k) => h('option', { value: String(k + 1), selected: st.reps === k + 1 }, `Arrêtée après la rep ${k + 1}`))]);
+  sel.addEventListener('change', () => { st.reps = Number(sel.value); persoSync(st); save1(); });
+  const warn = h('div', { class: 'set-warn', role: 'alert', hidden: true });
+  const go = h('button', { class: 'btn small pset-go', onclick: () => {
+    inputs.forEach((inp, j) => { st.loads[j] = num(inp.value); });
+    st.reps = Number(sel.value);
+    const miss = inputs.slice(0, st.reps).filter((inp, j) => typeof st.loads[j] !== 'number' || st.loads[j] < 0);
+    if (miss.length) {
+      miss.forEach(inp => inp.classList.add('err'));
+      warn.textContent = 'Indique la charge de chaque rep faite avant de valider (0 si c\'est au poids du corps).';
+      warn.hidden = false; miss[0].focus();
+      return;
+    }
+    persoSync(st); st.done = true; st.t = Date.now();
+    save1(); onValidated(); redraw();
+  } }, `✓ Valider la série ${i + 1}`);
+  block.append(h('label', { class: 'pset-reps' }, 'Reps faites', sel), warn, go);
+  return block;
+}
+
 function viewSession(name, date) {
   setTab('home');
   const id = sessionId(date, name);
@@ -646,14 +699,30 @@ function viewSession(name, date) {
     const nLo = devs.filter(d => d < 0).length, nHi = devs.filter(d => d > 0).length;
     const devTags = [nLo ? h('span', { class: 'dev-tag lo' }, `${nLo} hors fourchette`) : null, nHi ? h('span', { class: 'dev-tag hi' }, `${nHi} au-dessus`) : null];
     const head = h('button', { class: 'ex-head', onclick: () => { ui.active = open ? null : ex.id; redraw(); } },
-      h('div', { class: 'grow' }, h('h3', {}, ex.name, ex.extra ? h('span', { class: 'extra-tag' }, '+ Complément') : null, perSet(ex) ? h('span', { class: 'mode-tag' }, SET_MODES[ex.mode]) : null, prs[ex.id] ? h('span', { class: 'pr-tag' }, 'PR') : null, devTags), h('div', { class: 'sub' }, isCardio(ex) ? `${ex.lo === ex.hi ? ex.lo : `${ex.lo} à ${ex.hi}`} min${cardioNote(ex) ? ' · ' + cardioNote(ex) : ''}` : `${repsLabel(ex)}${ex.note ? ' · ' + ex.note : ''}`),
+      h('div', { class: 'grow' }, h('h3', {}, ex.name, ex.extra ? h('span', { class: 'extra-tag' }, '+ Complément') : null, perSet(ex) ? h('span', { class: 'mode-tag' }, SET_MODES[ex.mode]) : null, prs[ex.id] ? h('span', { class: 'pr-tag' }, 'PR') : null, devTags), h('div', { class: 'sub' }, isCardio(ex) ? `${ex.lo === ex.hi ? ex.lo : `${ex.lo} à ${ex.hi}`} min${cardioNote(ex) ? ' · ' + cardioNote(ex) : ''}` : isPerso(ex) ? `${persoRepsTxt(ex)} · charge par rep${ex.note ? ' · ' + ex.note : ''}` : `${repsLabel(ex)}${ex.note ? ' · ' + ex.note : ''}`),
         ex.swapOf ? h('span', { class: 'swaptag' }, `⇄ à la place de ${ex.swapOf.name}`) : ex.stoppedFor ? h('span', { class: 'swaptag' }, `⇄ arrêté, suite avec ${ex.stoppedFor}`) : null),
       h('span', { class: 'count' }, `${nDone}/${entry.sets.length}`));
     const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : ''), 'data-ex': ex.id },
       h('div', { class: 'ex-top' }, head, h('button', { class: 'qbtn', 'aria-label': `Fiche de l'exercice ${ex.name}`, onclick: () => openFiche(ex, id) }, '?')));
     if (!open) return card;
     card.append(h('div', { class: 'hint' }, sugs[ex.id].text));
-    card.append(isCardio(ex)
+    // Après une série validée : chrono, minuteur de repos, passage à l'exercice suivant quand tout est fait.
+    const onValidated = () => {
+      const c = db.sessions[id].clock;
+      if (!c?.start || c.end || c.pausedAt) editClock(date, name, (k, now) => {
+        if (!k.start) k.start = now;
+        if (k.pausedAt) { k.pauseMs += now - k.pausedAt; k.pausedAt = null; }
+        k.end = null;
+      });
+      if (ex.rest > 0) startTimer(ex.rest, ex.name, id);
+      if (doneSets(entry).length >= entry.sets.length) {
+        const idx = list.indexOf(ex);
+        const nxt = list.slice(idx + 1).find(e => doneSets(db.sessions[id]?.entries?.[e.id]).length < e.sets);
+        ui.active = nxt ? nxt.id : null;
+      }
+    };
+    if (isPerso(ex) && !isCardio(ex)) entry.sets.forEach((st, i) => card.append(persoSetBlock(ex, entry, st, i, devs[i], () => commit(date, name, ex, entry), onValidated, redraw)));
+    else card.append(isCardio(ex)
       // Libellés communs à l'appli et au dashboard : Durée (min), Pente (%), Vitesse (km/h) ; sur deux lignes s'il y en a plusieurs.
       ? (multi => h('div', { class: 'set cardio' + (hasSlope(ex) ? ' slope' : '') + (hasSpeed(ex) ? ' speed' : '') }, h('span'),
         h('span', { class: 'head' }, 'Durée', multi ? h('br') : ' ', '(min)'),
@@ -663,7 +732,7 @@ function viewSession(name, date) {
     // Séries de la dernière séance de cet exercice : chaque valeur qui en diffère (même numéro de série)
     // s'affiche en orange avec l'écart, pour voir ce qui change et fait un éventuel record.
     const prevSets = exHistory(ex.id, id).at(-1)?.sets || [];
-    entry.sets.forEach((st, i) => {
+    if (!isPerso(ex) || isCardio(ex)) entry.sets.forEach((st, i) => {
       const save1 = () => commit(date, name, ex, entry);
       const kgIn = h('input', { type: 'text', inputmode: 'decimal', value: st.kg == null ? '' : fmtKg(st.kg), 'aria-label': 'Charge en kg' });
       const repIn = h('input', { type: 'text', inputmode: 'numeric', value: st.reps == null ? '' : String(st.reps), 'aria-label': 'Répétitions' });
@@ -715,21 +784,9 @@ function viewSession(name, date) {
         }
         if (st.done) st.t = Date.now(); else delete st.t;
         commit(date, name, ex, entry);
-        if (st.done) {
-          // Le chrono démarre seul à la première série validée ; une série validée après « Terminer » rouvre la séance.
-          const c = db.sessions[id].clock;
-          if (!c?.start || c.end || c.pausedAt) editClock(date, name, (k, now) => {
-            if (!k.start) k.start = now;
-            if (k.pausedAt) { k.pauseMs += now - k.pausedAt; k.pausedAt = null; }
-            k.end = null;
-          });
-          if (ex.rest > 0) startTimer(ex.rest, ex.name, id); // cardio : pas de repos, pas de minuteur
-          if (doneSets(entry).length >= entry.sets.length) {
-            const idx = list.indexOf(ex);
-            const nxt = list.slice(idx + 1).find(e => doneSets(db.sessions[id]?.entries?.[e.id]).length < e.sets);
-            ui.active = nxt ? nxt.id : null;
-          }
-        }
+        // Le chrono démarre seul à la première série validée ; une série validée après « Terminer » rouvre la séance.
+        // Cardio : pas de repos, pas de minuteur (rest = 0).
+        if (st.done) onValidated();
         redraw();
       } }, st.done ? '✓' : '○');
       // Série hors fourchette : flèche sous le numéro de série (à côté des reps, elle masquerait le chiffre sur 360 px).
@@ -753,7 +810,7 @@ function viewSession(name, date) {
     // La rangée commence sous le bord gauche des boutons kg (colonne numéro 14 px + écart 4 px) et tout y fait 40 px de haut.
     const actRow = 'margin-top:8px;gap:6px;align-items:stretch;padding-left:18px';
     card.append(h('div', { class: 'row', style: actRow + ';flex-wrap:wrap' },
-      h('button', { class: 'btn secondary small tight', onclick: () => { const last = entry.sets[entry.sets.length - 1]; entry.sets.push({ kg: last?.kg ?? null, reps: last?.reps ?? null, rir: '', done: false }); commit(date, name, ex, entry); redraw(); } }, '+ Série'),
+      h('button', { class: 'btn secondary small tight', onclick: () => { const last = entry.sets[entry.sets.length - 1]; const pl = last && (last.loads || (isPerso(ex) ? loadsAt(ex, entry.sets.length - 1) : null)); entry.sets.push({ kg: last?.kg ?? null, reps: pl ? pl.length : last?.reps ?? null, rir: '', done: false, ...(pl ? { loads: [...pl] } : {}) }); commit(date, name, ex, entry); redraw(); } }, '+ Série'),
       entry.sets.length > 1 ? h('button', { class: 'btn secondary small tight', onclick: () => { entry.sets.pop(); commit(date, name, ex, entry); redraw(); } }, '− Série') : null,
       h('a', { class: 'btn secondary small tight', href: `#/ex/${ex.id}` }, 'Historique'),
       planned.includes(ex) && nDone < ex.sets ? h('button', { class: 'btn secondary small tight', onclick: () => openSwap(ex, id, list.map(e => e.id), to => {
@@ -845,6 +902,8 @@ function confirmDeleteSession(rec) {
 // la charge la plus lourde validée (record de charge) ou, à une charge déjà soulevée, le meilleur nombre de reps
 // à cette charge (record de reps). Battu = une série validée aujourd'hui dépasse l'un des deux.
 function prTarget(ex, sug, sessionRecId, entry) {
+  // Perso : seul le record de charge compte (les reps d'une série ne sont pas toutes à la même charge).
+  if (isPerso(ex) && sug?.sets) sug = { kg: Math.max(0, ...sug.sets.map(x => x.kg ?? 0)), reps: 0 };
   if (sug?.kg == null || !(sug.kg > 0)) return null;
   const sets = exHistory(ex.id, sessionRecId).flatMap(x => x.sets).filter(x => x.kg > 0);
   if (!sets.length) return null; // première fois : pas de record à battre
@@ -856,9 +915,9 @@ function prTarget(ex, sug, sessionRecId, entry) {
   else if (bestAt(sug.kg) >= 0 && sug.reps > bestAt(sug.kg)) t = { type: 'reps', goal: `${fmtKg(sug.kg)} kg × ${sug.reps}`, detail: `Reps à ${fmtKg(sug.kg)} kg : record ${bestAt(sug.kg)}` };
   if (!t) return null;
   const heavier = doneToday.find(x => x.kg > maxKg);
-  const moreReps = doneToday.find(x => bestAt(x.kg) >= 0 && x.reps > bestAt(x.kg));
+  const moreReps = isPerso(ex) ? null : doneToday.find(x => bestAt(x.kg) >= 0 && x.reps > bestAt(x.kg));
   if (heavier) Object.assign(t, { done: `✓ ${fmtKg(heavier.kg)} kg`, detail: 'Nouveau record de charge' });
-  else if (moreReps) Object.assign(t, { done: `✓ ${fmtKg(moreReps.kg)} kg × ${moreReps.reps}`, detail: `Nouveau record de reps à ${fmtKg(moreReps.kg)} kg` });
+  else if (moreReps && !isPerso(ex)) Object.assign(t, { done: `✓ ${fmtKg(moreReps.kg)} kg × ${moreReps.reps}`, detail: `Nouveau record de reps à ${fmtKg(moreReps.kg)} kg` });
   return t;
 }
 function recordsCard(list, prs, open) {
@@ -914,7 +973,7 @@ function unswapExercise(date, name, ex, toId) {
   rec.swaps = { ...rec.swaps }; delete rec.swaps[ex.id];
   if (rec.entries[toId] && !doneSets(rec.entries[toId]).length) { delete rec.entries[toId]; rec.removed = { ...rec.removed, [toId]: now }; }
   const e = rec.entries[ex.id];
-  if (e && e.sets.length < ex.sets) { while (e.sets.length < ex.sets) { const l = e.sets[e.sets.length - 1]; e.sets.push({ kg: l.kg, reps: l.reps, rir: '', done: false }); } e.u = now; }
+  if (e && e.sets.length < ex.sets) { while (e.sets.length < ex.sets) { const l = e.sets[e.sets.length - 1]; e.sets.push({ kg: l.kg, reps: l.reps, rir: '', done: false, ...(l.loads ? { loads: [...l.loads] } : {}) }); } e.u = now; }
   rec.swapsU = rec.updatedAt = now;
   save();
 }
@@ -1187,7 +1246,7 @@ function viewExercise(exId) {
       h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'Durée (min)'), hasSlope(ex) ? h('th', {}, 'Pente (%)') : null, hasSpeed(ex) ? h('th', {}, 'Vitesse (km/h)') : null),
         [...hist].reverse().map(x => { const p = cardioPente(x.sets), v = cardioVitesse(x.sets); return h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, String(cardioMinutes(x.sets))),
           hasSlope(ex) ? h('td', {}, p != null ? fmtKg(p) : '–') : null, hasSpeed(ex) ? h('td', {}, v != null ? fmtKg(v) : '–') : null); }))) : null);
-  const pts = hist.map(x => ({ t: parseYmd(x.date).getTime(), v: bestE1rm(x.sets), label: x.sets.map(s2 => `${fmtKg(s2.kg)}×${s2.reps}`).join(' ') })).filter(p => p.v != null);
+  const pts = hist.map(x => ({ t: parseYmd(x.date).getTime(), v: bestE1rm(x.sets), label: x.sets.map(s2 => setTxt(s2, fmtKg)).join(' ') })).filter(p => p.v != null);
   mount(
     // Ouvert depuis une séance ou depuis la liste des exercices : on revient d'où l'on vient.
     exFrom.startsWith('#/seance/') ? h('a', { href: exFrom }, '‹ Séance') : h('a', { href: '#/historique/exercices' }, '‹ Exercices'),
@@ -1196,7 +1255,7 @@ function viewExercise(exId) {
     pts.length ? lineChart([{ name: '1RM estimé', points: pts }], 'kg') : h('p', { class: 'muted' }, hist.length ? 'Exercice au poids du corps : pas de courbe de 1RM.' : 'Pas encore de données.'),
     h('details', { open: true }, h('summary', {}, 'Détail des séances'),
       h('table', {}, h('tr', {}, h('th', {}, 'Date'), h('th', {}, 'Séries (kg × reps)'), h('th', {}, 'Charge')),
-        [...hist].reverse().map(x => h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, x.sets.map(s2 => `${fmtKg(s2.kg)}×${s2.reps}`).join('  ')), h('td', {}, loadTag(x.load)))))));
+        [...hist].reverse().map(x => h('tr', {}, h('td', {}, fmtDate(x.date)), h('td', {}, x.sets.map(s2 => setTxt(s2, fmtKg)).join('  ')), h('td', {}, loadTag(x.load)))))));
 }
 
 // Mensurations suivies en plus du poids. La clé est celle stockée dans data.json.

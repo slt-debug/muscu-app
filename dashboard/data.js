@@ -70,6 +70,10 @@ function validProgram(p, needDate) {
       // Fourchettes par série (program.js) : un mode connu et une paire [lo, hi] par série.
       if (e.mode != null && (!SET_MODES[e.mode] || !Array.isArray(e.ranges) || e.ranges.length !== e.sets
         || !e.ranges.every(r => Array.isArray(r) && r.length === 2 && r.every(n => typeof n === 'number' && n >= 0) && r[0] <= r[1]))) return false;
+      // Perso : une liste de charges (nombre ≥ 0 ou null) par série, longueur = reps de la série.
+      if (e.mode === 'perso' && (!Array.isArray(e.loads) || e.loads.length !== e.sets
+        || !e.loads.every((l, i) => Array.isArray(l) && l.length >= 1 && l.length <= 30 && l.length === e.ranges[i][0] && l.length === e.ranges[i][1]
+          && l.every(v => v === null || (typeof v === 'number' && v >= 0))))) return false;
     }
   }
   return true;

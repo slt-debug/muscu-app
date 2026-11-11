@@ -449,3 +449,22 @@ body.gate #tabs { display: none; }
 .dev-tag.hi { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
 .dev-tag.ok { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
 .dev-msg { margin: 0 0 6px 18px; font-size: 13px; color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); border-radius: 9px; padding: 7px 10px; }
+/* Mode Perso (v74) : une case de charge par rep, une validation par série. */
+.pset { margin: 8px 0; display: grid; gap: 6px; }
+.pset:not(.done) { background: color-mix(in srgb, var(--field) 45%, transparent); border: 1px solid var(--grid); border-radius: 12px; padding: 8px; }
+.pset-head { display: flex; align-items: baseline; gap: 8px; font-size: 14px; }
+.pset-head b { color: var(--ink-2); font-weight: 600; }
+.pset-head .st { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--muted); }
+.pset-head .st.ok { color: var(--accent); }
+.pset-head .st.lo { color: var(--warn); }
+.pset-head .linkbtn { padding: 0; font-size: 13px; }
+.pset-grid { display: grid; gap: 4px; }
+.pcell { display: grid; gap: 2px; text-align: center; min-width: 0; }
+.pcell small { font-size: 11px; color: var(--muted); }
+.pcell input { width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box; border: 0; border-radius: 9px; background: var(--field); color: var(--ink); text-align: center; font: 600 16px inherit; font-variant-numeric: tabular-nums; padding: 0; }
+.pcell input.err { outline: 2px solid var(--bad); outline-offset: -2px; }
+.pcell.val { min-height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--ink); font-size: 15px; font-variant-numeric: tabular-nums; }
+.pcell.val.off { background: transparent; border: 1px dashed var(--grid); color: var(--muted); text-decoration: line-through; }
+.pset-reps { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; color: var(--ink-2); }
+.pset-reps select { min-height: 40px; border: 1px solid var(--grid); border-radius: 9px; background: var(--card); color: var(--ink); padding: 0 8px; }
+.pset-go { width: 100%; min-height: 44px; }
