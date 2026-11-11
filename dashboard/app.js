@@ -1404,7 +1404,8 @@ function viewProgramEdit() {
     const msel = h('select', { class: 'ein mode', title: 'Fourchette identique pour toutes les séries, une par série (Top set, Pyramide), ou une charge par rep (Perso)' },
       [['', 'Identique'], ...Object.entries(SET_MODES)].map(([v, l]) => h('option', { value: v, selected: (e.mode || '') === v }, l)));
     msel.addEventListener('change', () => { if (msel.value) e.mode = msel.value; else delete e.mode; fixRanges(e); changed(); });
-    if (isPerso(e)) return [msel, ...persoRows(e)];
+    // Perso : le résumé ici, la grille des charges sur une ligne pleine largeur sous l'exercice (persoSubRow).
+    if (isPerso(e)) return [msel, ' ', h('span', { class: 'sub' }, persoRepsTxt(e))];
     return [msel, perSet(e) ? e.ranges.map((_, i) => h('div', { class: 'rgl' }, h('small', {}, `S${i + 1}`), rangeIn(e, i, 0), '–', rangeIn(e, i, 1)))
       : h('div', { class: 'rgl' }, field(e, 'lo', { w: 40 }), '–', field(e, 'hi', { w: 40 }))];
   };
@@ -1437,7 +1438,7 @@ function viewProgramEdit() {
       nameCell = [sel, h('button', { class: 'btn small secondary', onclick: () => { replacing = null; redraw(); } }, 'Annuler')];
     }
     const move = dir => () => { const j = i + dir; if (j < 0 || j >= list.length) return; [list[i], list[j]] = [list[j], list[i]]; changed(); };
-    return h('tr', { class: b ? '' : 'new' },
+    const row = h('tr', { class: (b ? '' : 'new') + (isPerso(e) ? ' has-perso' : '') },
       h('td', { class: 'ord' }, h('button', { class: 'ico', title: 'Monter', disabled: i === 0, onclick: move(-1) }, '↑'), h('button', { class: 'ico', title: 'Descendre', disabled: i === list.length - 1, onclick: move(1) }, '↓')),
       h('td', { class: 'exn' }, nameCell),
       h('td', {}, gsel),
@@ -1450,6 +1451,9 @@ function viewProgramEdit() {
       h('td', { class: 'acts' },
         h('button', { class: 'ico', title: 'Remplacer par un autre exercice (nouvel historique)', onclick: () => { replacing = e.id; redraw(); } }, '⇄'),
         h('button', { class: 'ico del', title: 'Retirer de la séance', onclick: () => { list.splice(i, 1); changed(); } }, '✕')));
+    if (!isPerso(e)) return row;
+    return [row, h('tr', { class: 'perso-sub' }, h('td'), h('td', { colspan: '9' },
+      h('div', { class: 'pgrid' }, h('div', { class: 'sub' }, 'Charges par rep (kg)'), persoRows(e))))];
   });
   const addSel = exerciseSelect(list.map(x => x.id), 'Ajouter un exercice…');
   addSel.addEventListener('change', () => { const ne = addSel.value && pick(addSel.value); if (!ne) { addSel.value = ''; return; } list.push(ne); GROUP[ne.id] = ne.group; changed(); });

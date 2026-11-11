@@ -363,6 +363,14 @@ td.reps .rgl small { width: 20px; color: var(--muted); font-size: 11px; }
 /* Perso : une case de charge par rep, sur une ligne par série. */
 td.reps .rgl.pl small.rh { width: 42px; text-align: center; }
 td.reps .rgl.pl .btn.small { padding: 2px 6px; font-size: 12px; }
+/* Grille Perso : ligne pleine largeur sous l'exercice, pour que Repos, Pas, Charge et Consigne restent visibles. */
+tr.has-perso td { border-bottom: 0; }
+tr.perso-sub td { padding-top: 0; }
+.pgrid { display: grid; gap: 4px; justify-items: start; background: color-mix(in srgb, var(--goal-ink, #b85a0f) 9%, transparent); border: 1px solid color-mix(in srgb, var(--goal-ink, #b85a0f) 35%, transparent); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; overflow-x: auto; }
+.pgrid .rgl { display: flex; align-items: center; gap: 4px; }
+.pgrid .rgl small { width: 22px; color: var(--muted); font-size: 11px; }
+.pgrid .rgl small.rh { width: 42px; text-align: center; }
+.pgrid .rgl .btn.small { padding: 2px 6px; font-size: 12px; }
 select.tplsel { max-width: 220px; }
 
 /* Écarts au programme : lien de la carte Adhérence, page des écarts, flèches des séries. */
