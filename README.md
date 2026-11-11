@@ -2,6 +2,14 @@
 
 Appli web installable (PWA) de suivi du programme de musculation : séance du jour, saisie des séries, progression automatique (double progression), minuteur de repos, historique et suivi corporel. Fonctionne sans réseau.
 
+## Documentation (PDF, v74)
+
+- [Manuel Muscu](docs/manuel-muscu.pdf) : installation, pages de l'appli, dashboard, bon à savoir
+- [Présentation de l'appli](docs/presentation-appli.pdf)
+- [Présentation du dashboard](docs/presentation-dashboard.pdf)
+
+Captures réalisées sur des données fictives.
+
 ## Architecture
 
 - Pas de build : `index.html`, `app.js`, `program.js`, `style.css`, `sw.js` (cache hors ligne), `manifest.webmanifest`.
