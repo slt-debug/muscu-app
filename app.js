@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '75 (programme modifiable sur le téléphone)';
+const APP_VERSION = '76 (séries par muscle sur Séance et Objectifs)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -609,7 +609,8 @@ function viewHome() {
       return h('a', { class: 'btn secondary' + (days.length ? ' done' : ''), href: `#/seance/${encodeURIComponent(n)}/${today()}` }, n,
         days.length ? h('small', {}, `✓ ${days.join(', ')}`) : null);
     })),
-    ui.homeAdh ? adherenceDetails(adh) : null);
+    ui.homeAdh ? adherenceDetails(adh) : null,
+    muscleWeekCard());
 }
 
 // Série en mode Perso : une case de charge par rep (pré-remplie d'après le programme), « Reps faites »
@@ -1119,6 +1120,65 @@ function viewHistory(sub) {
 // Force estimée par groupe musculaire, semaine par semaine (12 dernières). Pour chaque exercice : meilleur 1RM estimé
 // de la semaine, rapporté à sa toute première semaine (= 100). Indice d'un groupe = moyenne de ses exercices déjà
 // commencés, la dernière valeur connue d'un exercice étant reportée les semaines où il n'est pas fait.
+// ---------- Séries par groupe musculaire et par semaine (v76, mêmes règles que le dashboard) ----------
+// Une série compte quand elle est validée ; le cardio ne compte pas. Cible = séries prévues par semaine dans le
+// programme actif le lundi de la semaine. Gris sous la cible, vert pile, orange au-delà.
+const MUSCLES = ['Pecs', 'Dos', 'Épaules', 'Bras', 'Jambes', 'Abdos'], MUSCLE_PRIO = new Set(['Pecs', 'Bras', 'Jambes']);
+const exGroupId = id => EXERCISES[id]?.group || CATALOG.find(c => c.id === id)?.group;
+const muscleLabel = g => g + (MUSCLE_PRIO.has(g) ? ' ★' : '');
+function muscleWeeks(n = 8) {
+  const now = weekStart(), weeks = Array.from({ length: n }, (_, i) => addDays(now, -7 * (n - 1 - i)));
+  const grid = Object.fromEntries(MUSCLES.map(g => [g, Object.fromEntries(weeks.map(w => [w, 0]))]));
+  for (const r of Object.values(db.sessions)) {
+    if (r.deleted) continue;
+    const w = addDays(r.date, -((parseYmd(r.date).getDay() + 6) % 7));
+    if (!(w in grid.Pecs)) continue;
+    for (const [id, e] of Object.entries(r.entries || {})) { const g = exGroupId(id); if (grid[g]) grid[g][w] += doneSets(e).length; }
+  }
+  const target = Object.fromEntries(weeks.map(w => [w, progPlannedSets(programFor(w), e => e.group || exGroupId(e.id) || 'Jambes')]));
+  return { weeks, grid, target, now };
+}
+const muscleZone = (n, t) => !n ? '' : !t ? 'neutral' : n > t ? 'hi' : n === t ? 'in' : 'lo';
+// A : tableau des 8 dernières semaines (page Objectifs, et déplié sous les barres de la page Séance).
+function muscleTable(m) {
+  return [
+    h('div', { class: 'mt-grid', role: 'table', 'aria-label': 'Séries par groupe musculaire et par semaine' },
+      h('span'), m.weeks.map(w => h('span', { class: 'mt-w' + (w === m.now ? ' now' : '') }, `S${isoWeek(w)}`)), h('span', { class: 'mt-w' }, 'Cible'),
+      MUSCLES.map(g => [h('span', { class: 'mt-g' }, muscleLabel(g)),
+        m.weeks.map(w => { const n = m.grid[g][w], t = m.target[w][g] || 0;
+          return h('span', { class: `mt-c ${muscleZone(n, t)}${w === m.now ? ' now' : ''}`, title: `${g}, semaine ${isoWeek(w)} : ${plural(n, 'série')}${t ? ` sur ${t} prévues` : ', pas de cible'}` }, n || ''); }),
+        h('span', { class: 'mt-t' }, m.target[m.now][g] || '–')])),
+    h('div', { class: 'mt-legend' }, [['lo', 'sous la cible'], ['in', 'cible atteinte'], ['hi', 'au-delà'], ['now', 'semaine en cours']].map(([c, l]) => h('span', {}, h('i', { class: c }), l)))];
+}
+function muscleTableCard() {
+  const m = muscleWeeks();
+  return h('div', { class: 'card mt-card' },
+    h('div', { class: 'mt-head' }, h('b', {}, 'Séries par muscle'), h('span', { class: 'sub' }, `8 semaines · ${programFor(m.now).label}`)),
+    muscleTable(m),
+    h('p', { class: 'mt-note' }, '★ zones prioritaires. Chaque semaine est comparée au programme actif son lundi. Le cardio ne compte pas.'));
+}
+// B : barres de la semaine en cours (page Séance), le tableau des 8 semaines au toucher.
+function muscleWeekCard() {
+  const m = muscleWeeks(), w = m.now;
+  const rows = MUSCLES.map(g => {
+    const n = m.grid[g][w], t = m.target[w][g] || 0, over = t && n > t;
+    const fill = !t ? 0 : over ? t / n * 100 : n / t * 100;
+    const txt = !t ? (n ? `${plural(n, 'série')} · pas de cible` : 'pas prévu cette semaine') : over ? `+${n - t} au-delà` : n === t ? 'cible atteinte' : `reste ${t - n}`;
+    return h('div', { class: 'mb-row' },
+      h('span', { class: 'mb-g' }, muscleLabel(g)),
+      h('div', { class: 'mb-bar' }, fill ? h('span', { class: 'mb-fill', style: `width:${fill}%;background-size:${over ? 100 : 100 / Math.max(fill, 1) * 100}% 100%` }) : null,
+        over ? h('span', { class: 'mb-over', style: `left:${fill}%;width:${100 - fill}%` }) : null),
+      h('span', { class: 'mb-txt' }, t ? h('b', {}, `${n} / ${t}`) : null, t ? ' · ' : null, h('span', { class: over ? 'hi' : t && n === t ? 'in' : '' }, txt)));
+  });
+  return h('div', { class: 'card mb-card' },
+    h('div', { class: 'mt-head' }, h('b', {}, 'Séries par muscle'), h('span', { class: 'sub' }, 'semaine en cours')),
+    rows,
+    h('button', { class: 'linkbtn', 'aria-expanded': String(!!ui.homeMuscles), onclick: () => { ui.homeMuscles = !ui.homeMuscles; const y = window.scrollY; viewHome(); window.scrollTo(0, y); } },
+      ui.homeMuscles ? 'Masquer les 8 dernières semaines ‹' : 'Voir les 8 dernières semaines ›'),
+    ui.homeMuscles ? muscleTable(m) : null,
+    h('p', { class: 'mt-note' }, 'Cible = séries prévues par semaine dans ton programme. ★ zones prioritaires. Le cardio ne compte pas.'));
+}
+
 function strengthCard() {
   const groupOf = ex => ex.group || CATALOG.find(c => c.id === ex.id)?.group || 'Autres';
   const weekOf = d => addDays(d, -((parseYmd(d).getDay() + 6) % 7));
@@ -2624,7 +2684,8 @@ function viewGoals() {
     // Pas et adhérence sur la même ligne ; sans pas, l'adhérence prend toute la largeur.
     (ws => ws ? h('div', { class: 'duo' }, ws, weeklyAdherenceCard()) : weeklyAdherenceCard(true))(weeklyStepsCard()),
     goalCard(['Poids', srcOf('poids') === 'manuel' ? h('span', { class: 'wb man', style: 'margin-left:8px' }, '✎ Manuel') : null], 'kg', pts('poids'), goals?.poids ?? null, null, fmtKg),
-    strengthCard());
+    strengthCard(),
+    muscleTableCard());
 }
 
 function viewSettings() {
