@@ -586,3 +586,4 @@ body.gate #tabs { display: none; }
 .mb-txt b { color: var(--ink); }
 .mb-txt .in { color: var(--h-in-ink); font-weight: 700; }
 .mb-txt .hi { color: var(--h-hi-ink); font-weight: 700; }
+.mb-card .mb-row:last-child { margin-bottom: 0; }

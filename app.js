@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '76 (séries par muscle sur Séance et Objectifs)';
+const APP_VERSION = '77 (carte des séries par muscle allégée sur Séance)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -1157,7 +1157,7 @@ function muscleTableCard() {
     muscleTable(m),
     h('p', { class: 'mt-note' }, '★ zones prioritaires. Chaque semaine est comparée au programme actif son lundi. Le cardio ne compte pas.'));
 }
-// B : barres de la semaine en cours (page Séance), le tableau des 8 semaines au toucher.
+// B : barres de la semaine en cours (page Séance) ; le tableau des 8 semaines est sur la page Objectifs.
 function muscleWeekCard() {
   const m = muscleWeeks(), w = m.now;
   const rows = MUSCLES.map(g => {
@@ -1172,11 +1172,7 @@ function muscleWeekCard() {
   });
   return h('div', { class: 'card mb-card' },
     h('div', { class: 'mt-head' }, h('b', {}, 'Séries par muscle'), h('span', { class: 'sub' }, 'semaine en cours')),
-    rows,
-    h('button', { class: 'linkbtn', 'aria-expanded': String(!!ui.homeMuscles), onclick: () => { ui.homeMuscles = !ui.homeMuscles; const y = window.scrollY; viewHome(); window.scrollTo(0, y); } },
-      ui.homeMuscles ? 'Masquer les 8 dernières semaines ‹' : 'Voir les 8 dernières semaines ›'),
-    ui.homeMuscles ? muscleTable(m) : null,
-    h('p', { class: 'mt-note' }, 'Cible = séries prévues par semaine dans ton programme. ★ zones prioritaires. Le cardio ne compte pas.'));
+    rows);
 }
 
 function strengthCard() {
