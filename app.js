@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '74 (mode Perso : une charge par rep)';
+const APP_VERSION = '75 (programme modifiable sur le téléphone)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -997,7 +997,8 @@ function removeExtra(date, name, exId) {
   save();
 }
 // Volet de choix d'un complément : recherche, filtre par groupe musculaire, dernière performance.
-function openAddExercise(sessionRecId, taken, sessionName, onPick) {
+// opts.sub : sous-titre (l'éditeur de programme s'en sert : ce n'est plus un complément).
+function openAddExercise(sessionRecId, taken, sessionName, onPick, opts = {}) {
   if (document.querySelector('.sheet-wrap')) return;
   const close = () => wrap.remove();
   const norm = t => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -1032,7 +1033,7 @@ function openAddExercise(sessionRecId, taken, sessionName, onPick) {
     h('div', { class: 'sheet swap', role: 'dialog', 'aria-label': 'Ajouter un exercice' },
       h('span', { class: 'grab', 'aria-hidden': 'true' }),
       h('h2', { style: 'margin:4px 0 2px' }, 'Ajouter un exercice'),
-      h('div', { class: 'sub' }, `En complément de ${sessionName} · hors score d'adhérence`),
+      h('div', { class: 'sub' }, opts.sub || `En complément de ${sessionName} · hors score d'adhérence`),
       search, chips, box,
       h('button', { class: 'btn secondary', style: 'margin-top:10px', onclick: close }, 'Fermer')));
   document.body.append(wrap);
@@ -1575,6 +1576,8 @@ function navRow(href, icon, icCls, title, summary, summaryId) {
     h('span', { class: 'chev', 'aria-hidden': 'true' }, '›'));
 }
 const syncIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('path', { d: 'M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4' }));
+const progIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('path', { d: 'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01' }));
+const progSummary = () => `${programFor(today()).label}${pdoc?.draft ? ' · brouillon en cours' : ''}`;
 const saveIcon = () => s('svg', { viewBox: '0 0 24 24' }, s('path', { d: 'M12 3v12M7 10l5 5 5-5M4 20h16' }));
 function syncSummary() {
   const st = { off: ['', 'Non configurée'], idle: ['', 'Prête'], busy: ['', 'Synchronisation…'], ok: ['ok', `Synchronisé à ${sync.at || ''}`], err: ['err', 'Erreur de synchro'] }[sync.state];
@@ -2215,7 +2218,7 @@ function viewProgramChoice() {
   mount(
     h('a', { class: 'back', href: '#/objectifs' }, '‹ Objectifs'),
     h('h1', {}, 'Choisis ton programme'),
-    h('p', { class: 'sub' }, 'Tu pourras le modifier ensuite dans le dashboard.'),
+    h('p', { class: 'sub' }, 'Tu pourras le modifier ensuite dans Réglages › Programme, ou dans le dashboard.'),
     TEMPLATES.map(x => {
       const n = Object.values(x.sessions).reduce((a, l) => a + l.length, 0), sel = x.id === t.id;
       return h('button', { class: 'card tpl' + (sel ? ' sel' : ''), 'aria-pressed': String(sel), onclick: () => { ui.tpl = x.id; viewProgramChoice(); } },
@@ -2229,6 +2232,372 @@ function viewProgramChoice() {
     h('button', { class: 'btn', onclick: start }, cfgOk() ? `Commencer avec ${t.label}` : 'Régler la synchronisation'),
     msg);
 }
+// ---------- Éditeur de programme sur le téléphone (v75) ----------
+// Même principe que le dashboard, mêmes règles (progedit.js) : un brouillon partagé, enregistré au fil de l'eau
+// dans programs.json, puis « Appliquer » à une date. Chaque écriture vérifie que le fichier n'a pas changé depuis
+// sa lecture : sinon le programme est rechargé, sans rien écraser. Restent sur le dashboard : historique des
+// versions, correction d'une version passée, impact détaillé par muscle, création d'un exercice hors catalogue.
+let pdoc = null, pdocAt = 0, pLoading = false, pLoadErr = '', pState = { msg: '', err: false }, pQueue = Promise.resolve(), pTimer = null;
+const pKept = { ranges: new Map(), loads: new Map() };
+const pGroupOf = e => e.group || CATALOG.find(c => c.id === e.id)?.group || 'Jambes';
+const pRest = s => s >= 60 ? (s % 60 ? `${Math.floor(s / 60)} min ${s % 60}` : `${s / 60} min`) : `${s} s`;
+const pEnc = encodeURIComponent;
+// Versions triées ; sans fichier, le programme intégré compte comme la première (depuis la première séance).
+function pVersions() {
+  const vs = (pdoc?.versions || []).slice().sort((a, b) => a.from.localeCompare(b.from));
+  if (vs.length) return vs;
+  const first = Object.values(db.sessions).filter(r => !r.deleted).map(r => r.date).sort()[0] || today();
+  return [{ ...BUILTIN, from: first }];
+}
+const pActive = () => { const vs = pVersions(); return vs.filter(v => v.from <= today()).pop() || vs[0]; };
+const pBase = () => { const D = pdoc?.draft; return (D && pVersions().find(v => v.id === D.baseId)) || pActive(); };
+// Clé de comparaison d'un exercice avec la version de départ (étiquette « modifié »).
+const pExKey = e => JSON.stringify([e.name, e.sets, e.lo, e.hi, e.mode || '', e.ranges || null, e.loads || null, e.rest, e.step, e.kg ?? null, e.note || '']);
+async function loadPdoc() {
+  const url = ghUrl().replace(/[^/]+$/, 'programs.json');
+  const r = await ghFetch(url, { headers: ghHeaders(), cache: 'no-store' });
+  if (r.status === 404) return { versions: [], draft: null, updatedAt: null };
+  if (!r.ok) throw new Error(`GitHub ${r.status}`);
+  const p = await ghContent(url, await r.json());
+  if (!p || !Array.isArray(p.versions)) throw new Error('programme illisible');
+  return { versions: p.versions, draft: p.draft || null, updatedAt: p.updatedAt || null };
+}
+function pStatusPaint() {
+  const el = document.getElementById('pstat');
+  if (el) { el.textContent = pState.msg; el.className = 'pe-stat' + (pState.err ? ' err' : ''); }
+}
+// Une écriture à la fois : deux envois partis ensemble se croiraient « modifiés ailleurs ».
+function pSave() { clearTimeout(pTimer); pTimer = null; const run = pQueue.then(pWrite); pQueue = run.catch(() => {}); return run; }
+function pSaveSoon() {
+  clearTimeout(pTimer);
+  pState = { msg: 'Modifié, enregistrement…', err: false }; pStatusPaint();
+  pTimer = setTimeout(pSave, 800);
+}
+async function pWrite() {
+  const next = { versions: pdoc.versions, draft: pdoc.draft, updatedAt: Date.now() };
+  if (!validPrograms(next)) { pState = { msg: 'Réglage incomplet : non enregistré, vérifie les cases.', err: true }; pStatusPaint(); return false; }
+  pState = { msg: 'Enregistrement…', err: false }; pStatusPaint();
+  try {
+    await updateRepoJson('programs.json', d => {
+      if ((d.updatedAt || null) !== (pdoc.updatedAt || null)) { const e = new Error(PROG_STALE); e.stale = true; throw e; }
+      return next;
+    }, 'programme (téléphone)');
+    pdoc.updatedAt = next.updatedAt;
+    programs = { versions: pdoc.versions }; store(PKEY, programs); fillExercises();
+    const d = new Date();
+    pState = { msg: `Enregistré à ${pad2(d.getHours())}:${pad2(d.getMinutes())}`, err: false }; pStatusPaint();
+    return true;
+  } catch (e) {
+    if (e.stale) {
+      try { pdoc = await loadPdoc(); pdocAt = Date.now(); } catch { /* relu à la prochaine ouverture */ }
+      pState = { msg: `${PROG_STALE} (dashboard) : version rechargée, vérifie ta dernière modification.`, err: true };
+      if (location.hash.startsWith('#/prog')) render();
+      return false;
+    }
+    pState = { msg: `Non enregistré : ${e.message}`, err: true }; pStatusPaint();
+    return false;
+  }
+}
+const pStatus = () => h('p', { id: 'pstat', class: 'pe-stat' + (pState.err ? ' err' : ''), role: 'status' }, pState.msg);
+const pBack = (href, label) => h('a', { class: 'back', href }, `‹ ${label}`);
+function pSheet(title, buttons) {
+  if (document.querySelector('.sheet-wrap')) return;
+  const close = () => wrap.remove();
+  const wrap = h('div', { class: 'sheet-wrap' }, h('div', { class: 'dim', onclick: close }),
+    h('div', { class: 'sheet', role: 'dialog', 'aria-label': title }, h('span', { class: 'grab', 'aria-hidden': 'true' }),
+      h('h2', { style: 'margin:4px 0 10px' }, title),
+      h('div', { class: 'pe-sheet' }, buttons.map(([label, cls, fn]) => h('button', { class: 'btn ' + cls, onclick: () => { close(); fn(); } }, label)),
+        h('button', { class: 'btn secondary', onclick: close }, 'Fermer'))));
+  document.body.append(wrap);
+}
+// Exercice pris dans le catalogue (ou un exercice déjà connu), prêt à entrer dans le programme.
+function pNewExercise(id) {
+  const src = CATALOG.find(c => c.id === id) || EXERCISES[id];
+  if (!src) return null;
+  const e = JSON.parse(JSON.stringify(src));
+  e.group = e.group || pGroupOf(e);
+  if (e.kg === undefined) e.kg = null;
+  return e;
+}
+
+function viewProg(parts) {
+  setTab('set');
+  if (!cfgOk()) return mount(pBack('#/reglages', 'Réglages'), h('h1', {}, 'Programme'),
+    h('p', { class: 'sub' }, 'Règle d\'abord la synchronisation GitHub : le programme est enregistré dans ton dépôt privé.'),
+    h('a', { class: 'btn', href: '#/sync' }, 'Régler la synchronisation'));
+  // Relu en arrivant sur l'accueil du programme (au plus toutes les 30 s), jamais pendant un enregistrement en attente.
+  const stale = !pdoc || (parts.length === 1 && Date.now() - pdocAt > 30e3 && !pTimer);
+  if (stale && !pLoading) {
+    pLoading = true; pLoadErr = '';
+    loadPdoc().then(p => { pdoc = p; pdocAt = Date.now(); })
+      .catch(e => { pLoadErr = e.message; })
+      .finally(() => { pLoading = false; if (location.hash.startsWith('#/prog')) render(); });
+  }
+  if (!pdoc) return mount(pBack('#/reglages', 'Réglages'), h('h1', {}, 'Programme'),
+    h('p', { class: 'sub' }, pLoadErr ? `Programme non lu : ${pLoadErr}. Vérifie la connexion, puis reviens sur cette page.` : 'Chargement du programme…'));
+  if (parts[1] === 's' && parts[2] != null) return parts[3] != null ? pExercise(parts[2], Number(parts[3])) : pSession(parts[2]);
+  if (parts[1] === 'appliquer') return pApplyView();
+  return pHome();
+}
+
+// 1. Semaine et séances
+function pHome() {
+  const D = pdoc.draft, vs = pVersions(), active = pActive();
+  const head = [pBack('#/reglages', 'Réglages'), h('h1', {}, 'Programme')];
+  const next = vs.find(v => v.from > today());
+  if (!D) {
+    return mount(head,
+      h('div', { class: 'card' },
+        h('b', {}, active.label), h('div', { class: 'sub' }, `actif depuis le ${fmtDate(active.from)}`),
+        next ? h('div', { class: 'sub' }, `${next.label} prévu à partir du ${fmtDate(next.from)}`) : null,
+        h('div', { class: 'pe-days ro' }, PROG_DAYS.map(d => h('span', { class: active.days[d] ? '' : 'off' }, h('b', {}, cap(JOURS[d]).slice(0, 3)), active.days[d] || 'Repos'))),
+        Object.entries(active.sessions).map(([n, l]) => h('div', { class: 'pe-srow ro' }, h('b', {}, n), h('span', { class: 'sub' }, `${plural(l.length, 'exercice')} · ≈ ${progEstMinutes(l, pGroupOf)} min`)))),
+      h('button', { class: 'btn', onclick: () => { pdoc.draft = progNewDraft(vs, null, pGroupOf); pSaveSoon(); render(); } }, 'Modifier le programme'),
+      h('p', { class: 'sub' }, 'Tu modifies un brouillon : rien ne change dans tes séances tant que tu ne l\'as pas appliqué. Le même brouillon se retrouve sur le dashboard.'),
+      pStatus());
+  }
+  const base = pBase(), changes = progDiff(base, D, pGroupOf), names = Object.keys(D.sessions);
+  const abandon = () => {
+    if (!confirm('Abandonner le brouillon ? Toutes ses modifications seront perdues.')) return;
+    pdoc.draft = null; pSave(); render();
+  };
+  const days = h('div', { class: 'pe-days' }, PROG_DAYS.map(d => {
+    const sel = h('select', { 'aria-label': cap(JOURS[d]) }, h('option', { value: '' }, 'Repos'), names.map(n => h('option', { value: n, selected: D.days[d] === n }, n)));
+    sel.addEventListener('change', () => { if (sel.value) D.days[d] = sel.value; else delete D.days[d]; D.updatedAt = Date.now(); pSaveSoon(); render(); });
+    return h('label', { class: D.days[d] ? '' : 'off' }, h('span', {}, cap(JOURS[d]).slice(0, 3)), sel);
+  }));
+  const tag = n => !base.sessions[n] ? 'nouvelle' : changes.some(c => c.startsWith(`${n} :`)) ? 'modifiée' : '';
+  const sessions = h('div', { class: 'card pe-list' }, names.length ? names.map(n => {
+    const l = D.sessions[n], t = tag(n), onDays = PROG_DAYS.filter(d => D.days[d] === n).map(d => cap(JOURS[d]).slice(0, 3)).join(', ');
+    return h('a', { class: 'pe-srow', href: `#/prog/s/${pEnc(n)}` },
+      h('span', { class: 'grow' }, h('b', {}, n), t ? h('span', { class: 'pe-tag' }, t) : null,
+        h('small', {}, `${onDays || 'aucun jour'} · ${plural(l.length, 'exercice')} · ${plural(l.reduce((a, e) => a + e.sets, 0), 'série')} · ≈ ${progEstMinutes(l, pGroupOf)} min`)),
+      h('span', { class: 'chev', 'aria-hidden': 'true' }, '›'));
+  }) : h('p', { class: 'sub' }, 'Aucune séance : crée-en une avec « + Séance ».'));
+  const addSession = () => {
+    const nn = (prompt('Nom de la nouvelle séance (par exemple « Full body »)') || '').trim();
+    if (!nn) return;
+    if (D.sessions[nn]) { alert('Ce nom existe déjà.'); return; }
+    D.sessions[nn] = []; pSaveSoon(); go(`#/prog/s/${pEnc(nn)}`);
+  };
+  const tpl = h('select', { class: 'pe-tpl', 'aria-label': 'Partir d\'un modèle' }, h('option', { value: '' }, 'Partir d\'un modèle…'), TEMPLATES.map(t => h('option', { value: t.id }, t.label)));
+  tpl.addEventListener('change', () => {
+    const t = TEMPLATES.find(x => x.id === tpl.value);
+    if (!t || !confirm(`Remplacer tout le brouillon par le modèle « ${t.label} » ? Les séances déjà faites restent dans l'historique.`)) { tpl.value = ''; return; }
+    D.days = JSON.parse(JSON.stringify(t.days)); D.sessions = JSON.parse(JSON.stringify(t.sessions));
+    for (const list of Object.values(D.sessions)) for (const e of list) e.group = e.group || pGroupOf(e);
+    pSaveSoon(); render();
+  });
+  mount(head,
+    h('div', { class: 'pe-draft' },
+      h('div', {}, h('b', {}, D.fixOf ? `Correction de « ${D.label} »` : `Brouillon « ${D.label} »`), ` · ${plural(changes.length, 'changement')}`),
+      h('div', { class: 'sub' }, D.fixOf ? 'Corrige la version en cours, sans en créer une nouvelle.' : 'Rien ne change dans tes séances tant que tu ne l\'as pas appliqué.'),
+      h('div', { class: 'pe-actions' },
+        h('a', { class: 'btn small', href: '#/prog/appliquer' }, D.fixOf ? 'Enregistrer…' : 'Appliquer…'),
+        h('button', { class: 'btn small danger', onclick: abandon }, 'Abandonner'))),
+    pStatus(),
+    h('div', { class: 'card' }, h('div', { class: 'pe-h' }, h('b', {}, 'Semaine'), h('span', { class: 'sub' }, `${active.label} actif depuis le ${fmtDate(active.from)}`)), days),
+    sessions,
+    h('div', { class: 'pe-actions' }, h('button', { class: 'btn add-ex', onclick: addSession }, '+ Séance'), tpl));
+}
+
+// 2. Exercices d'une séance
+function pSession(name) {
+  const D = pdoc.draft, list = D?.sessions[name];
+  if (!list) return go('#/prog');
+  const base = pBase(), bl = base.sessions[name] || [];
+  const redraw = () => { const y = window.scrollY; render(); window.scrollTo(0, y); };
+  const move = (i, dir) => { const j = i + dir; if (j < 0 || j >= list.length) return; [list[i], list[j]] = [list[j], list[i]]; pSaveSoon(); redraw(); };
+  const rename = () => {
+    const nn = (prompt('Nouveau nom de la séance', name) || '').trim();
+    if (!nn || nn === name) return;
+    if (D.sessions[nn]) { alert('Ce nom existe déjà.'); return; }
+    D.sessions = Object.fromEntries(Object.entries(D.sessions).map(([k, v]) => [k === name ? nn : k, v]));
+    for (const k of Object.keys(D.days)) if (D.days[k] === name) D.days[k] = nn;
+    pSaveSoon(); location.replace(`#/prog/s/${pEnc(nn)}`);
+  };
+  const more = () => pSheet(name, [
+    ['Dupliquer la séance', 'secondary', () => { let nn = `${name} (copie)`; while (D.sessions[nn]) nn += ' bis'; D.sessions[nn] = JSON.parse(JSON.stringify(list)); pSaveSoon(); go(`#/prog/s/${pEnc(nn)}`); }],
+    ['Supprimer la séance', 'danger', () => {
+      if (!confirm(`Supprimer la séance « ${name} » du brouillon ? Les séances déjà faites restent dans l'historique.`)) return;
+      delete D.sessions[name];
+      for (const k of Object.keys(D.days)) if (D.days[k] === name) delete D.days[k];
+      pSaveSoon(); go('#/prog');
+    }]]);
+  const onDays = PROG_DAYS.filter(d => D.days[d] === name).map(d => cap(JOURS[d])).join(', ') || 'aucun jour';
+  const rows = list.map((e, i) => {
+    const o = bl.find(x => x.id === e.id), t = !o ? 'nouveau' : pExKey(o) !== pExKey(e) ? 'modifié' : '';
+    const plan = isCardio(e) ? `${e.lo === e.hi ? e.lo : `${e.lo} à ${e.hi}`} min` : `${perSet(e) ? SET_MODES[e.mode] + ' · ' : ''}${repsLabel(e)}`;
+    return h('div', { class: 'pe-exrow' + (t ? ' chg' : '') },
+      h('span', { class: 'pe-ord' },
+        h('button', { 'aria-label': `Monter ${e.name}`, disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
+        h('button', { 'aria-label': `Descendre ${e.name}`, disabled: i === list.length - 1, onclick: () => move(i, 1) }, '↓')),
+      h('a', { class: 'grow', href: `#/prog/s/${pEnc(name)}/${i}` }, h('b', {}, e.name), t ? h('span', { class: 'pe-tag' }, t) : null,
+        h('small', {}, `${plan} · repos ${pRest(e.rest)}`)),
+      h('span', { class: 'chev', 'aria-hidden': 'true' }, '›'));
+  });
+  const removed = bl.filter(o => !list.some(x => x.id === o.id));
+  const add = () => openAddExercise(null, list.map(x => x.id), name, id => {
+    const e = pNewExercise(id); if (!e) return;
+    list.push(e); pSaveSoon(); redraw();
+  }, { sub: `Dans le brouillon, séance ${name}` });
+  // Effet du brouillon : durée de la séance et séries par semaine des groupes qu'elle travaille.
+  const m = progEstMinutes(list, pGroupOf), mo = base.sessions[name] ? progEstMinutes(bl, pGroupOf) : null;
+  const pd = progPlannedSets(D, pGroupOf), pb = progPlannedSets(base, pGroupOf);
+  const groups = [...new Set(list.map(pGroupOf).filter(g => g !== 'Cardio'))];
+  const eff = [`${name} ≈ ${m} min${mo != null && mo !== m ? ` (${m > mo ? '+' : ''}${m - mo} min)` : ''}`,
+    ...groups.map(g => { const v = pd[g] || 0, dv = v - (pb[g] || 0); return `${g} ${v} séries par semaine${dv ? ` (${dv > 0 ? '+' : ''}${dv})` : ''}`; })];
+  mount(
+    pBack('#/prog', 'Programme'),
+    h('div', { class: 'pe-title' }, h('h1', {}, name),
+      h('button', { class: 'btn small secondary', onclick: rename }, 'Renommer'),
+      h('button', { class: 'btn small secondary', 'aria-label': 'Autres actions : dupliquer, supprimer', onclick: more }, '⋯')),
+    h('p', { class: 'sub' }, `${cap(onDays)} · ${D.fixOf ? 'correction' : 'brouillon'} « ${D.label} ». Touche un exercice pour le régler, les flèches pour changer l'ordre.`),
+    pStatus(),
+    rows.length ? rows : h('p', { class: 'sub' }, 'Aucun exercice pour l\'instant.'),
+    removed.length ? h('div', { class: 'pe-removed' }, h('small', {}, 'Retirés de cette séance'),
+      removed.map(o => h('div', { class: 'pe-rmrow' }, h('span', {}, o.name), h('button', { class: 'linkbtn', onclick: () => { list.push(JSON.parse(JSON.stringify(o))); pSaveSoon(); redraw(); } }, '↺ Remettre')))) : null,
+    h('button', { class: 'btn add-ex', onclick: add }, '+ Ajouter un exercice'),
+    h('div', { class: 'card pe-eff' }, h('b', {}, 'Effet du brouillon'), h('span', {}, eff.join(' · ')),
+      groups.length ? h('small', {}, 'Zone conseillée : 10 à 20 séries par semaine et par groupe.') : null));
+}
+
+// 3. Réglage d'un exercice
+function pExercise(name, i) {
+  const D = pdoc.draft, list = D?.sessions[name], e = list?.[i];
+  if (!e) return go(D?.sessions[name] ? `#/prog/s/${pEnc(name)}` : '#/prog');
+  const o = (pBase().sessions[name] || []).find(x => x.id === e.id);
+  const cardio = isCardio(e);
+  const redraw = () => { const y = window.scrollY; render(); window.scrollTo(0, y); };
+  const changed = (again = true) => { pSaveSoon(); if (again) redraw(); };
+  const plan = x => isCardio(x) ? `${x.lo === x.hi ? x.lo : `${x.lo} à ${x.hi}`} min` : `${perSet(x) ? SET_MODES[x.mode].toLowerCase() + ' ' : ''}${repsLabel(x)}`;
+  const numIn = (label, value, onSet, opts = {}) => {
+    const inp = h('input', { type: 'text', inputmode: opts.int ? 'numeric' : 'decimal', value: value == null ? '' : fmtKg(value), placeholder: opts.ph || '', 'aria-label': label });
+    inp.addEventListener('change', () => { const v = num(inp.value); onSet(v != null && v >= 0 ? (opts.int ? Math.round(v) : v) : null); });
+    return inp;
+  };
+  // Séries
+  const setsRow = h('div', { class: 'pe-line' }, h('span', {}, 'Séries'),
+    h('span', { class: 'pe-step' },
+      h('button', { 'aria-label': 'Une série de moins', disabled: e.sets <= 1, onclick: () => { e.sets = Math.max(1, e.sets - 1); progFixRanges(e, pKept); changed(); } }, '−'),
+      h('b', {}, e.sets),
+      h('button', { 'aria-label': 'Une série de plus', disabled: e.sets >= 10, onclick: () => { e.sets = Math.min(10, e.sets + 1); progFixRanges(e, pKept); changed(); } }, '+')));
+  // Mode des séries
+  const modes = cardio ? null : h('div', { class: 'pe-block' }, h('span', {}, 'Mode des séries'),
+    h('div', { class: 'pe-modes' }, [['', 'Identique'], ...Object.entries(SET_MODES)].map(([v, l]) => {
+      const on = (e.mode || '') === v;
+      return h('button', { class: on ? 'on' : '', 'aria-pressed': String(on), onclick: () => { if (on) return; if (v) e.mode = v; else delete e.mode; progFixRanges(e, pKept); changed(); } }, l);
+    })));
+  // Fourchettes ou charges
+  const rangePair = (lo, hi, onLo, onHi) => [numIn('Minimum', lo, onLo, { int: true }), h('span', { class: 'pe-a' }, 'à'), numIn('Maximum', hi, onHi, { int: true })];
+  let reps;
+  if (cardio || !perSet(e)) {
+    reps = h('div', { class: 'pe-block' }, h('span', {}, cardio ? 'Durée (min)' : 'Fourchette de reps'),
+      h('div', { class: 'pe-range' }, rangePair(e.lo, e.hi,
+        v => { if (v == null || v < 1) return redraw(); e.lo = v; if (e.lo > e.hi) e.hi = e.lo; changed(); },
+        v => { if (v == null || v < 1) return redraw(); e.hi = v; if (e.lo > e.hi) e.lo = e.hi; changed(); })));
+  } else if (isPerso(e)) {
+    reps = h('div', { class: 'pe-block' }, h('span', {}, 'Charge de chaque rep (kg), par série'),
+      e.loads.map((l, si) => h('div', { class: 'pe-loads' },
+        h('div', { class: 'pe-h' }, h('b', {}, `S${si + 1}`), h('small', {}, plural(l.length, 'rep')),
+          h('span', { class: 'pe-actions' },
+            h('button', { class: 'btn small secondary', disabled: l.length >= 30, onclick: () => { l.push(l[l.length - 1] ?? null); progFixRanges(e, pKept); changed(); } }, '+ rep'),
+            h('button', { class: 'btn small secondary', disabled: l.length <= 1, onclick: () => { l.pop(); progFixRanges(e, pKept); changed(); } }, '− rep'))),
+        h('div', { class: 'pe-cells' }, l.map((v, j) => h('label', {}, h('small', {}, `r${j + 1}`),
+          numIn(`Série ${si + 1}, rep ${j + 1}, kg`, v, x => { l[j] = x; changed(false); }, { ph: '–' })))))));
+  } else {
+    reps = h('div', { class: 'pe-block' }, h('span', {}, 'Fourchette de reps, par série'),
+      e.ranges.map((r, si) => h('div', { class: 'pe-range' }, h('b', {}, `S${si + 1}`), rangePair(r[0], r[1],
+        v => { if (v == null || v < 1) return redraw(); r[0] = v; if (r[0] > r[1]) r[1] = r[0]; progFixRanges(e, pKept); changed(); },
+        v => { if (v == null || v < 1) return redraw(); r[1] = v; if (r[0] > r[1]) r[0] = r[1]; progFixRanges(e, pKept); changed(); }))));
+  }
+  // Repos, pas, charge de départ, consigne
+  const note = h('input', { type: 'text', value: e.note || '', placeholder: 'par exemple « Charge par main »', 'aria-label': 'Consigne' });
+  note.addEventListener('change', () => { const v = note.value.trim(); if (v) e.note = v; else delete e.note; changed(false); });
+  const fields = h('div', { class: 'card pe-fields' },
+    h('label', {}, h('span', {}, 'Repos (secondes)'), numIn('Repos en secondes', e.rest, v => { if (v == null) return redraw(); e.rest = v; changed(false); }, { int: true })),
+    cardio ? null : h('label', {}, h('span', {}, 'Pas de charge (kg)'), numIn('Pas de charge en kg', e.step, v => { if (v == null) return redraw(); e.step = v; changed(false); })),
+    cardio || isPerso(e) ? null : h('label', {}, h('span', {}, 'Charge de départ (kg)'), numIn('Charge de départ en kg', e.kg, v => { e.kg = v; changed(false); }, { ph: '–' })),
+    h('label', { class: 'wide' }, h('span', {}, 'Consigne'), note));
+  const replace = () => openSwap(e, null, list.map(x => x.id), id => {
+    const ne = pNewExercise(id); if (!ne) return;
+    list[i] = ne; changed();
+  });
+  const remove = () => {
+    if (!confirm(`Retirer « ${e.name} » de la séance ${name} ?`)) return;
+    list.splice(i, 1); pSaveSoon(); go(`#/prog/s/${pEnc(name)}`);
+  };
+  mount(
+    pBack(`#/prog/s/${pEnc(name)}`, name),
+    h('h1', { class: 'pe-exname' }, e.name),
+    h('p', { class: 'sub' }, `${pGroupOf(e)} · ${o ? (pExKey(o) === pExKey(e) ? 'inchangé' : `avant : ${plan(o)}`) : 'nouveau dans la séance'}`),
+    h('div', { class: 'card pe-card' }, cardio ? null : setsRow, modes, reps),
+    fields,
+    h('div', { class: 'pe-actions two' },
+      h('button', { class: 'btn secondary', onclick: replace }, '⇄ Remplacer'),
+      h('button', { class: 'btn danger', onclick: remove }, 'Retirer de la séance')),
+    h('p', { class: 'sub' }, 'Enregistré au fil de l\'eau dans le brouillon. Remplacer donne au nouvel exercice son propre historique.'),
+    pStatus());
+}
+
+// 4. Appliquer à une date (ou enregistrer la correction d'une version)
+let pApplying = false;
+function pApplyView() {
+  const D = pdoc.draft;
+  if (!D) return go('#/prog');
+  const vs = pVersions(), last = vs[vs.length - 1], base = pBase(), changes = progDiff(base, D, pGroupOf);
+  const warn = ui.pWarn; ui.pWarn = false;
+  const nm = progNextMonday(today()), min = addDays(last.from, 1);
+  const choices = [nm > last.from ? ['lundi', nm, `Lundi prochain · ${fmtDate(nm)}`, 'conseillé'] : null,
+    today() > last.from ? ['auj', today(), `Aujourd'hui · ${fmtDate(today())}`, ''] : null].filter(Boolean);
+  if (!ui.pDate || !['lundi', 'auj', 'autre'].includes(ui.pDate.k) || (ui.pDate.k !== 'autre' && !choices.some(c => c[0] === ui.pDate.k)))
+    ui.pDate = { k: choices[0]?.[0] || 'autre', other: nm > last.from ? nm : min };
+  const from = () => ui.pDate.k === 'autre' ? ui.pDate.other : choices.find(c => c[0] === ui.pDate.k)[1];
+  const err = h('p', { class: 'pe-stat err', role: 'alert' });
+  const labelIn = h('input', { type: 'text', value: D.label, 'aria-label': 'Nom de la version' });
+  const dateIn = h('input', { type: 'date', value: ui.pDate.other, min, 'aria-label': 'Date de début' });
+  dateIn.addEventListener('change', () => { ui.pDate = { k: 'autre', other: dateIn.value }; render(); });
+  const radio = (k, label, hint) => h('label', { class: 'pe-radio' + (ui.pDate.k === k ? ' on' : '') },
+    h('input', { type: 'radio', name: 'pdate', checked: ui.pDate.k === k, onchange: () => { ui.pDate = { ...ui.pDate, k }; render(); } }),
+    h('span', { class: 'grow' }, label), hint ? h('small', {}, hint) : null);
+  const apply = async () => {
+    if (pApplying) return;
+    pApplying = true; err.textContent = 'Vérification…';
+    try {
+      // D'abord nos propres enregistrements en attente, puis relecture : si le dashboard a modifié le programme
+      // entre-temps, on le montre au lieu d'écraser.
+      if (pTimer && !(await pSave())) { err.textContent = 'Brouillon non enregistré : rien n\'a été appliqué.'; return; }
+      await pQueue;
+      let fresh;
+      try { fresh = await loadPdoc(); } catch (e) { err.textContent = `Programme non relu : ${e.message}. Rien n'a été appliqué.`; return; }
+      if ((fresh.updatedAt || null) !== (pdoc.updatedAt || null)) { pdoc = fresh; pdocAt = Date.now(); ui.pWarn = true; render(); return; }
+      const r = progApply(pdoc, vs, D.fixOf ? null : from(), labelIn.value.trim(), pGroupOf);
+      if (r.error) { err.textContent = r.error; return; }
+      const keep = pdoc, tried = { ...r.doc, updatedAt: keep.updatedAt };
+      pdoc = tried;
+      if (!(await pSave())) { if (pdoc === tried) { pdoc = keep; err.textContent = 'Échec de l\'enregistrement : rien n\'a été appliqué.'; } return; }
+      toast(D.fixOf ? `Correction de ${D.label} enregistrée` : `${labelIn.value.trim() || D.label} : à partir du ${fmtDate(from())}`);
+      ui.pDate = null; go('#/prog');
+    } finally { pApplying = false; }
+  };
+  mount(
+    pBack('#/prog', 'Programme'),
+    h('h1', {}, D.fixOf ? `Corriger « ${D.label} »` : `Appliquer « ${D.label} »`),
+    h('div', { class: 'card pe-changes' }, h('b', {}, `Changements (${changes.length})`),
+      changes.length ? changes.map(c => h('div', {}, `• ${c}`)) : h('div', { class: 'sub' }, 'Aucun pour l\'instant.')),
+    warn ? h('div', { class: 'pe-warn', role: 'alert' }, 'Le programme a été modifié sur le dashboard depuis ton brouillon : je l\'ai rechargé sans rien écraser. Vérifie les changements ci-dessus, puis applique.') : null,
+    D.fixOf ? h('p', { class: 'sub' }, 'La version garde sa date de début ; la correction s\'applique aussi aux semaines déjà passées de cette version.')
+      : h('div', { class: 'card pe-dates' }, h('b', {}, 'À partir de'),
+        choices.map(c => radio(c[0], c[2], c[3])),
+        radio('autre', 'Une autre date', ''),
+        ui.pDate.k === 'autre' ? dateIn : null,
+        h('small', {}, 'Une semaine est jugée avec le programme actif à son lundi : commencer un lundi garde des statistiques propres.')),
+    h('label', { class: 'pe-name' }, h('span', {}, 'Nom de la version'), labelIn),
+    err,
+    h('button', { class: 'btn', onclick: apply }, D.fixOf ? 'Enregistrer la correction' : `Appliquer le ${fmtDate(from())}`),
+    h('a', { class: 'btn secondary', href: '#/prog', style: 'margin-top:8px' }, 'Annuler'));
+}
+
 function startCard() {
   const body = Object.values(db.body).filter(b => !b.deleted);
   const steps = [
@@ -2265,6 +2634,7 @@ function viewSettings() {
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Réglages'), syncChip()),
     h('div', { class: 'navlist' },
+      navRow('#/prog', progIcon(), 'prog', 'Programme', progSummary()),
       navRow('#/repos', timerIcon(), '', 'Minuteur de repos', restSummary()),
       navRow('#/sync', syncIcon(), 'gh', 'Synchronisation GitHub', syncSummary(), 'sync-sum'),
       navRow('#/sources', scaleIcon(), 'scale', 'Données suivies', sourcesSummary()),
@@ -2551,6 +2921,7 @@ function render() {
     case 'objectifs': return viewGoals();
     case 'cibles': return viewGoalSettings();
     case 'programme': return viewProgramChoice();
+    case 'prog': return viewProg(parts);
     default: return viewHome();
   }
 }
@@ -2572,6 +2943,8 @@ function parentPage(hash) {
   if (hash.startsWith('#/ex/')) return exFrom.startsWith('#/seance/') ? exFrom : '#/historique/exercices';
   if (hash === '#/withings') return '#/sources';
   if (hash === '#/programme') return '#/objectifs';
+  if (hash === '#/prog') return '#/reglages';
+  if (hash.startsWith('#/prog/')) { const p = hash.split('/'); return p[2] === 's' && p.length > 4 ? p.slice(0, 4).join('/') : '#/prog'; }
   if (['#/repos', '#/sync', '#/sauvegarde', '#/sources', '#/rappel', '#/cibles'].includes(hash)) return '#/reglages';
   return null;
 }

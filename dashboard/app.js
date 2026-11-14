@@ -7,7 +7,7 @@
 // On recharge alors une fois tous les fichiers en contournant le cache ; sinon, message plutôt que page blanche.
 (() => {
   const ok = typeof rangeAt === 'function' && typeof perSetPlan === 'function' && typeof SET_MODES !== 'undefined'
-    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function' && typeof pingUsage === 'function' && typeof adherenceWeek === 'function' && typeof kgForReps === 'function' && typeof isPerso === 'function' && typeof setVolume === 'function';
+    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function' && typeof pingUsage === 'function' && typeof adherenceWeek === 'function' && typeof kgForReps === 'function' && typeof isPerso === 'function' && typeof setVolume === 'function' && typeof progApply === 'function';
   const FLAG = 'muscu.dash.refetch';
   let tried = false;
   try { tried = sessionStorage.getItem(FLAG) === '1'; if (ok) sessionStorage.removeItem(FLAG); else sessionStorage.setItem(FLAG, '1'); } catch { /* stockage indisponible */ }
@@ -59,9 +59,10 @@ const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
 const weekStartOf = str => { const d = parseYmd(str); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return ymd(d); };
 
 // ---------- Versions du programme (programs.json dans le dépôt privé, écrit par ce dashboard) ----------
-// progDoc = { versions: [{ id, label, from, days, sessions, appliedAt, changes }], draft }
+// progDoc = { versions: [{ id, label, from, days, sessions, appliedAt, changes }], draft, updatedAt }
+// Règles communes avec l'éditeur du téléphone : progedit.js (brouillon partagé, écriture refusée si le fichier a changé).
 // Sans fichier, le programme intégré (program.js) fait office de « Programme 1 ».
-let progDoc = { versions: [], draft: null }, progOk = false;
+let progDoc = { versions: [], draft: null, updatedAt: null }, progOk = false;
 const BUILTIN = { id: 'p1', label: 'Programme 1', from: null, days: PROGRAM.days, sessions: PROGRAM.sessions };
 const clone = o => JSON.parse(JSON.stringify(o));
 function versions() {
@@ -145,7 +146,7 @@ async function load() {
     reminderCfg = r?.mensurations || null;
     // Programme illisible : on affiche le reste, mais on interdit toute modification pour ne pas écraser les versions existantes.
     progOk = !!p;
-    if (p) progDoc = { versions: p.versions || [], draft: p.draft || null };
+    if (p) progDoc = { versions: p.versions || [], draft: p.draft || null, updatedAt: p.updatedAt || null };
     overlayPending();
     fillExercises();
     setStatus('À jour ' + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }), 'ok');
@@ -1218,55 +1219,42 @@ const addDays = (str, n) => { const d = parseYmd(str); d.setDate(d.getDate() + n
 const keptRanges = new Map(), keptLoads = new Map();
 let editSession = null, applyOpen = false, replacing = null, histOpen = null, progSaveTimer = null;
 
-async function saveProgDoc() {
+// Une écriture à la fois : deux envois partis ensemble se croiraient « modifiés ailleurs ».
+let progQueue = Promise.resolve();
+function saveProgDoc() {
   clearTimeout(progSaveTimer);
+  const run = progQueue.then(writeProgDoc);
+  progQueue = run.catch(() => {});
+  return run;
+}
+async function writeProgDoc() {
   setStatus('Enregistrement du programme…');
   try {
-    await api('/api/programs', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muscu': '1' }, body: JSON.stringify(progDoc) });
+    const res = await api('/api/programs', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muscu': '1' }, body: JSON.stringify(progDoc) });
+    progDoc.updatedAt = res.updatedAt;
     setStatus('Programme enregistré ' + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }), 'ok');
     return true;
-  } catch (e) { setStatus('Échec de l\'enregistrement du programme : ' + e.message, 'err'); return false; }
+  } catch (e) {
+    if (String(e.message).startsWith(PROG_STALE)) {
+      // Le téléphone a écrit entre-temps : on recharge sa version plutôt que de l'écraser.
+      const p = await api('/api/programs').catch(() => null);
+      if (p) { progDoc = { versions: p.versions || [], draft: p.draft || null, updatedAt: p.updatedAt || null }; fillExercises(); render(); }
+      setStatus(`${PROG_STALE} (téléphone) : version rechargée, refais ta dernière modification si besoin.`, 'err');
+      return false;
+    }
+    setStatus('Échec de l\'enregistrement du programme : ' + e.message, 'err'); return false;
+  }
 }
 const saveDraftSoon = () => { clearTimeout(progSaveTimer); progSaveTimer = setTimeout(saveProgDoc, 800); };
 
 // Brouillon = copie de la dernière version (ou de la version à corriger), avec le groupe musculaire écrit sur chaque exercice.
+const progGroupOf = e => e.group || GROUP[e.id] || 'Jambes';
 function newDraft(fixOf) {
-  const vs = versions(), base = fixOf ? vs.find(v => v.id === fixOf) : vs[vs.length - 1];
-  const n = Math.max(0, ...vs.map(v => parseInt(String(v.id).replace(/\D/g, ''), 10) || 0)) + 1;
-  progDoc.draft = { id: fixOf || `p${n}`, label: fixOf ? base.label : `Programme ${n}`, days: clone(base.days), sessions: clone(base.sessions), baseId: base.id, fixOf: fixOf || null, updatedAt: Date.now() };
-  for (const list of Object.values(progDoc.draft.sessions)) for (const e of list) e.group = e.group || GROUP[e.id] || 'Jambes';
+  progDoc.draft = progNewDraft(versions(), fixOf, progGroupOf);
   editSession = null; applyOpen = false;
   saveDraftSoon();
 }
-
-function diffPrograms(a, b) {
-  const out = [];
-  for (const d of DAY_ORDER) if ((a.days[d] || '') !== (b.days[d] || '')) out.push(`${cap(JOURS[d])} : ${a.days[d] || 'repos'} → ${b.days[d] || 'repos'}`);
-  for (const n of Object.keys(a.sessions)) if (!b.sessions[n]) out.push(`Séance ${n} supprimée`);
-  for (const n of Object.keys(b.sessions)) {
-    const A = a.sessions[n], B = b.sessions[n];
-    if (!A) { out.push(`Séance ${n} ajoutée (${B.length} exercice${B.length > 1 ? 's' : ''})`); continue; }
-    for (const e of A) if (!B.some(x => x.id === e.id)) out.push(`${n} : − ${e.name}`);
-    for (const e of B) {
-      const o = A.find(x => x.id === e.id);
-      if (!o) { out.push(`${n} : + ${e.name} ${repsLabel(e)}`); continue; }
-      const ch = [];
-      if (o.name !== e.name) ch.push(`renommé « ${e.name} »`);
-      if (o.sets !== e.sets) ch.push(`séries ${o.sets} → ${e.sets}`);
-      const rl = x => perSet(x) ? `${SET_MODES[x.mode].toLowerCase()} ${repsLabel(x)}` : rng(x);
-      if (rl(o) !== rl(e)) ch.push(`reps ${rl(o)} → ${rl(e)}`);
-      if (o.rest !== e.rest) ch.push(`repos ${o.rest} → ${e.rest} s`);
-      if (o.step !== e.step) ch.push(`pas ${fmtKg(o.step)} → ${fmtKg(e.step)} kg`);
-      if ((o.kg ?? null) !== (e.kg ?? null)) ch.push(`charge de départ ${o.kg == null ? '–' : fmtKg(o.kg)} → ${e.kg == null ? '–' : fmtKg(e.kg)} kg`);
-      if ((o.note || '') !== (e.note || '')) ch.push('consigne modifiée');
-      if ((o.group || GROUP[o.id]) !== (e.group || GROUP[e.id])) ch.push(`groupe ${e.group}`);
-      if (ch.length) out.push(`${n} : ${o.name}, ${ch.join(', ')}`);
-    }
-    const keep = (X, Y) => X.filter(e => Y.some(x => x.id === e.id)).map(e => e.id).join();
-    if (keep(A, B) !== keep(B, A)) out.push(`${n} : ordre des exercices modifié`);
-  }
-  return out;
-}
+const diffPrograms = (a, b) => progDiff(a, b, progGroupOf);
 
 function versionBar() {
   const vs = versions(), active = programFor(today()), D = progDoc.draft;
@@ -1363,20 +1351,7 @@ function viewProgramEdit() {
   // Fourchettes : une seule (Identique) ou une par série (Top set, Pyramide) ; lo/hi suivent les extrêmes.
   // Repasser en « Identique » garde les fourchettes de côté (keptRanges) le temps de l'édition.
   // Perso : une liste de charges par série (une case par rep) ; ranges = [[n, n]] suit le nombre de cases.
-  const fixRanges = e => {
-    if (e.mode !== 'perso' && e.loads) { keptLoads.set(e.id, e.loads); delete e.loads; }
-    if (!SET_MODES[e.mode]) { if (e.ranges) keptRanges.set(e.id, e.ranges); delete e.mode; delete e.ranges; return; }
-    if (e.mode === 'perso') {
-      const n = Math.max(1, Math.min(30, e.hi || e.lo || 8));
-      const src = Array.isArray(e.loads) && e.loads.length ? e.loads : keptLoads.get(e.id) || [Array.from({ length: n }, () => e.kg ?? null)];
-      e.loads = Array.from({ length: e.sets }, (_, i) => [...(src[i] || src[src.length - 1])]);
-      e.ranges = e.loads.map(l => [l.length, l.length]);
-    } else {
-      const r = Array.isArray(e.ranges) && e.ranges.length ? e.ranges : keptRanges.get(e.id) || [[e.lo, e.hi]];
-      e.ranges = Array.from({ length: e.sets }, (_, i) => [...(r[i] || r[r.length - 1])]);
-    }
-    e.lo = Math.min(...e.ranges.map(x => x[0])); e.hi = Math.max(...e.ranges.map(x => x[1]));
-  };
+  const fixRanges = e => progFixRanges(e, { ranges: keptRanges, loads: keptLoads });
   // Case de charge d'une rep (Perso) : vide = à saisir en séance.
   const loadIn = (e, i, j) => {
     const b = baseEx(e.id), was = b && isPerso(b) ? loadsAt(b, i)?.[j] : undefined, cur = e.loads[i][j];
@@ -1502,20 +1477,15 @@ function viewProgramEdit() {
       try { await applyNow(); } finally { applying = false; }
     };
     const applyNow = async () => {
-      const from = dateIn.value;
-      if (!D.fixOf && (!from || from <= last.from)) { err.textContent = `La date doit être après le ${fmtDate(last.from)} (début de ${last.label}).`; return; }
-      if (!Object.values(D.days).some(Boolean)) { err.textContent = 'Le programme n\'a aucun jour d\'entraînement.'; return; }
-      // Le programme intégré devient une vraie version la première fois.
-      if (!progDoc.versions.length) progDoc.versions = clone(vs).map(v => ({ ...v, appliedAt: Date.now(), changes: ['Programme de départ'] }));
-      const clean = { days: Object.fromEntries(Object.entries(D.days).filter(([, n]) => n)), sessions: clone(D.sessions) };
-      if (D.fixOf) {
-        const v = progDoc.versions.find(x => x.id === D.fixOf);
-        Object.assign(v, clean, { label: labelIn.value.trim() || v.label, changes: [...(v.changes || []), ...changes.map(c => `Correction : ${c}`)] });
-      } else if (!progDoc.versions.some(x => x.id === D.id)) {
-        progDoc.versions.push({ id: D.id, label: labelIn.value.trim() || D.label, from, ...clean, appliedAt: Date.now(), changes });
+      const r = progApply(progDoc, vs, dateIn.value, labelIn.value.trim(), progGroupOf);
+      if (r.error) { err.textContent = r.error; return; }
+      const keep = progDoc, tried = { ...r.doc, updatedAt: keep.updatedAt };
+      progDoc = tried;
+      if (!(await saveProgDoc())) {
+        // Échec simple : on remet le brouillon. Refus (modifié sur le téléphone) : progDoc a déjà été rechargé.
+        if (progDoc === tried) { progDoc = keep; err.textContent = 'Échec de l\'enregistrement, rien n\'a été appliqué.'; }
+        return;
       }
-      const keep = progDoc.draft; progDoc.draft = null;
-      if (!(await saveProgDoc())) { progDoc.draft = keep; err.textContent = 'Échec de l\'enregistrement, rien n\'a été appliqué.'; return; }
       applyOpen = false; fillExercises(); location.hash = '#/programme';
     };
     applyBox = h('div', { class: 'card applybox' },

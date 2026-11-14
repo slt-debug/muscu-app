@@ -55,34 +55,7 @@ async function updateJson(file, fallback, fn, message) {
 }
 
 // ---------- Contrôles avant écriture (repris de l'ancien serveur) ----------
-// Un programme mal formé rendrait l'appli iPhone inutilisable.
-function validProgram(p, needDate) {
-  if (!p || typeof p !== 'object' || typeof p.id !== 'string' || typeof p.label !== 'string') return false;
-  if (needDate && !/^\d{4}-\d{2}-\d{2}$/.test(p.from || '')) return false;
-  if (!p.days || typeof p.days !== 'object' || !p.sessions || typeof p.sessions !== 'object') return false;
-  for (const n of Object.values(p.days)) if (n && !p.sessions[n]) return false;
-  for (const list of Object.values(p.sessions)) {
-    if (!Array.isArray(list)) return false;
-    for (const e of list) {
-      if (!e || typeof e.id !== 'string' || !e.id || typeof e.name !== 'string') return false;
-      for (const k of ['sets', 'lo', 'hi', 'rest', 'step']) if (typeof e[k] !== 'number' || !(e[k] >= 0)) return false;
-      if (e.sets < 1 || e.lo > e.hi) return false;
-      // Fourchettes par série (program.js) : un mode connu et une paire [lo, hi] par série.
-      if (e.mode != null && (!SET_MODES[e.mode] || !Array.isArray(e.ranges) || e.ranges.length !== e.sets
-        || !e.ranges.every(r => Array.isArray(r) && r.length === 2 && r.every(n => typeof n === 'number' && n >= 0) && r[0] <= r[1]))) return false;
-      // Perso : une liste de charges (nombre ≥ 0 ou null) par série, longueur = reps de la série.
-      if (e.mode === 'perso' && (!Array.isArray(e.loads) || e.loads.length !== e.sets
-        || !e.loads.every((l, i) => Array.isArray(l) && l.length >= 1 && l.length <= 30 && l.length === e.ranges[i][0] && l.length === e.ranges[i][1]
-          && l.every(v => v === null || (typeof v === 'number' && v >= 0))))) return false;
-    }
-  }
-  return true;
-}
-function validPrograms(x) {
-  if (!x || typeof x !== 'object' || !Array.isArray(x.versions)) return false;
-  if (!x.versions.every(v => validProgram(v, true))) return false;
-  return x.draft == null || validProgram(x.draft, false);
-}
+// Programme : validProgram / validPrograms sont dans progedit.js (partagés avec le téléphone).
 function validIncoming(x) {
   if (!x || typeof x !== 'object') return false;
   for (const k of ['sessions', 'body']) {
@@ -133,7 +106,7 @@ async function localApi(path, opt = {}) {
   const post = (opt.method || 'GET') === 'POST', body = post ? JSON.parse(opt.body || '{}') : null;
   if (!post) {
     if (path === '/api/data') return { ...(await readRemote()), repo: `${dcfg.owner}/${dcfg.repo}` };
-    if (path === '/api/programs') { const { data } = await readJson('programs.json', null); return { versions: (data && data.versions) || [], draft: (data && data.draft) || null }; }
+    if (path === '/api/programs') { const { data } = await readJson('programs.json', null); return { versions: (data && data.versions) || [], draft: (data && data.draft) || null, updatedAt: (data && data.updatedAt) || null }; }
     if (path === '/api/activity') return (await readJson('activity.json', { days: {} })).data || { days: {} };
     if (path === '/api/reminders') return (await readJson('reminders.json', {})).data || {};
     if (path === '/api/goals') return (await readJson('goals.json', {})).data || {};
@@ -142,7 +115,11 @@ async function localApi(path, opt = {}) {
     if (path === '/api/save') { if (!validIncoming(body)) throw new Error('données invalides'); return saveData(body); }
     if (path === '/api/programs') {
       if (!validPrograms(body)) throw new Error('programme invalide');
-      return updateJson('programs.json', null, () => ({ versions: body.versions, draft: body.draft || null, updatedAt: Date.now() }), 'programme');
+      // Refusé si le fichier a changé depuis sa lecture (téléphone) : on n'écrase jamais le travail fait ailleurs.
+      return updateJson('programs.json', null, d => {
+        if (((d && d.updatedAt) || null) !== (body.updatedAt || null)) { const e = new Error(PROG_STALE); e.stale = true; throw e; }
+        return { versions: body.versions, draft: body.draft || null, updatedAt: Date.now() };
+      }, 'programme');
     }
     if (path === '/api/withings/auto') { await updateJson('withings.json', {}, d => ({ ...d, auto: !!body.auto, autoAt: Date.now() }), 'withings réglage'); return { ok: true }; }
     if (path === '/api/goals') { if (!validGoals(body)) throw new Error('objectifs invalides'); return updateJson('goals.json', {}, d => ({ ...d, ...body, updatedAt: Date.now() }), 'objectifs'); }
