@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '79 (interrupteur du mode salle sur la ligne du titre)';
+const APP_VERSION = '80 (interrupteur du mode salle en haut à droite)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -610,7 +610,7 @@ function viewHome() {
   const salleTarget = todayName || nxt?.name;
   mount(
     h('div', { class: 'salle-title home' }, h('h1', {}, 'Séance'),
-      h('div', { class: 'row' }, salleTarget ? salleSwitch(() => { if (salleOn) go(`#/seance/${encodeURIComponent(salleTarget)}/${today()}`); else viewHome(); }) : null, syncChip())),
+      h('div', { class: 'row' }, syncChip(), salleTarget ? salleSwitch(() => { if (salleOn) go(`#/seance/${encodeURIComponent(salleTarget)}/${today()}`); else viewHome(); }) : null)),
     remindBanner(true),
     stepsCard(),
     // Carte du jour et compteur de la semaine côte à côte (poids dans Corps, séances passées dans Historique).
@@ -884,8 +884,9 @@ function viewSession(name, date) {
     ? h('div', { class: 'salle-head' },
       h('div', { class: 'grow' }, h('b', {}, name), h('div', { class: 'sub' }, `${done}/${total} séries · `, h('b', { 'data-clock': id }, fmtClock(sessionDuration(rec))))),
       awakeButton(), salleSwitch(() => redraw()))
-    : [h('div', { class: 'row between' }, h('a', { href: '#/' }, '‹ Accueil'), h('div', { class: 'row' }, awakeButton(), syncChip())),
-      h('div', { class: 'salle-title' }, h('h1', {}, name), salleSwitch(() => redraw())),
+    // Interrupteur toujours en haut à droite (comme la page Séance et l'en-tête du mode salle).
+    : [h('div', { class: 'row between salle-top' }, h('a', { href: '#/' }, '‹ Accueil'), h('div', { class: 'row' }, awakeButton(), syncChip(), salleSwitch(() => redraw()))),
+      h('h1', {}, name),
       h('div', { class: 'sub' }, `${cap(fmtDateLong(date))} · ${done}/${total} séries${rec ? ' · ' + sessionVolume(rec).toLocaleString('fr-FR') + ' kg de volume' : ''}`),
       h('div', { class: 'sclock' + (clockLive(rec) ? ' live' : '') },
         h('div', { class: 't' }, h('span', { 'data-clock': id }, fmtClock(sessionDuration(rec))), h('small', {}, clockSub)),

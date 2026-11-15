@@ -624,4 +624,7 @@ body.salle .stepper input { font-size: 20px; }
 body.salle .check { min-height: 54px; }
 body.salle .salle-plus { display: block; margin-top: 6px; padding: 8px 2px 0 18px; }
 .salle-title.home .row { gap: 8px; flex-wrap: nowrap; min-width: 0; }
-.salle-title.home .row > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.salle-title.home .row .chip, .salle-top .row .chip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.salle-top .row { gap: 8px; flex-wrap: nowrap; min-width: 0; }
+.salle-top > a { flex: none; }
+.salle-head { align-items: flex-start; margin-top: 0; }
