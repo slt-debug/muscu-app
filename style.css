@@ -587,3 +587,39 @@ body.gate #tabs { display: none; }
 .mb-txt .in { color: var(--h-in-ink); font-weight: 700; }
 .mb-txt .hi { color: var(--h-hi-ink); font-weight: 700; }
 .mb-card .mb-row:last-child { margin-bottom: 0; }
+/* Mode salle (v78) : seulement la séance en cours. Interrupteur, en-tête compact, exercices faits repliés,
+   réserve et boutons derrière « Plus », cases plus grandes, sans barre d'onglets. */
+.sw-salle { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; padding: 0; color: var(--ink-2); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; flex: none; }
+.sw-salle .track { position: relative; width: 52px; height: 32px; border-radius: 16px; background: var(--grid); transition: background-color .2s; }
+.sw-salle .knob { position: absolute; left: 3px; top: 3px; width: 26px; height: 26px; border-radius: 13px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: left .2s; }
+.sw-salle.on { color: var(--accent); }
+.sw-salle.on .track { background: var(--accent); }
+.sw-salle.on .knob { left: 23px; }
+.salle-row { display: flex; align-items: center; gap: 12px; }
+.salle-row .grow { flex: 1; min-width: 0; }
+.salle-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.salle-title h1 { min-width: 0; overflow-wrap: anywhere; }
+.salle-head { display: flex; align-items: center; gap: 10px; margin: 4px 0 10px; }
+.salle-head .grow { flex: 1; min-width: 0; }
+.salle-head > .grow > b { font-size: 22px; }
+.salle-head .sub b { color: var(--ink); font-variant-numeric: tabular-nums; }
+body:not(.salle) .salle-plus { display: none; }
+body.salle #tabs { display: none; }
+body.salle #timer { bottom: calc(12px + env(safe-area-inset-bottom)); }
+body.salle .card:not(.plus) .ex-more, body.salle .card:not(.plus) .ex-prev { display: none; }
+/* Exercices terminés et repliés : une ligne verte, un toucher les rouvre. */
+body.salle .card.done:not(.open) { background: color-mix(in srgb, var(--good) 12%, var(--card)); border-color: transparent; padding: 8px 12px; margin: 4px 0; }
+body.salle .card.done:not(.open) .ex-head .sub, body.salle .card.done:not(.open) .qbtn, body.salle .card.done:not(.open) .swaptag { display: none; }
+body.salle .card.done:not(.open) h3 { font-size: 15px; font-weight: 600; }
+body.salle .card.done:not(.open) h3::before { content: '✓ '; color: var(--good); font-weight: 800; }
+body.salle .card.open { border: 2px solid var(--accent); }
+/* Exercices à venir : une ligne compacte. */
+body.salle .card:not(.open):not(.done) { padding: 10px 12px; margin: 6px 0; }
+/* Séries : plus grandes, sans la réserve (sauf « Plus » ouvert). */
+body.salle .card:not(.plus) .set:not(.cardio):not(.ps) { grid-template-columns: 14px 1fr 1fr 54px; }
+body.salle .card:not(.plus) .set.ps:not(.cardio) { grid-template-columns: 28px 1fr 1fr 54px; }
+body.salle .card:not(.plus) .set:not(.cardio) .rir, body.salle .card:not(.plus) .set:not(.cardio) .head:nth-child(4) { display: none; }
+body.salle .stepper button { min-height: 54px; }
+body.salle .stepper input { font-size: 20px; }
+body.salle .check { min-height: 54px; }
+body.salle .salle-plus { display: block; margin-top: 6px; padding: 8px 2px 0 18px; }

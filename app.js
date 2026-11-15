@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '77 (carte des séries par muscle allégée sur Séance)';
+const APP_VERSION = '78 (mode salle)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -399,6 +399,19 @@ async function keepAwake(on = true) {
 const inSession = () => location.hash.startsWith('#/seance/');
 document.addEventListener('visibilitychange', () => { if (!document.hidden && inSession() && cfg.awake !== false) keepAwake(true); });
 window.addEventListener('hashchange', () => { if (!inSession()) keepAwake(false); });
+// Mode salle (v78) : seulement la séance en cours, sans barre d'onglets ni balayage entre pages.
+// Activé à la main (interrupteur) ou en touchant « Commencer » / « Reprendre », désactivé à la main ou à
+// « Terminer la séance ». Non mémorisé : l'appli rouverte repart en mode normal.
+let salleOn = false;
+function setSalle(on) {
+  salleOn = on; if (!on) ui.sallePlus = null;
+  document.body.classList.toggle('salle', on && inSession());
+}
+function salleSwitch(after, withText = true) {
+  return h('button', { type: 'button', class: 'sw-salle' + (salleOn ? ' on' : ''), role: 'switch', 'aria-checked': String(salleOn), 'aria-label': 'Mode salle',
+    onclick: () => { setSalle(!salleOn); toast(salleOn ? 'Mode salle : seulement la séance en cours' : 'Mode salle désactivé'); after(); } },
+    withText ? h('span', { class: 'lbl' }, 'Salle') : null, h('span', { class: 'track', 'aria-hidden': 'true' }, h('span', { class: 'knob' })));
+}
 function awakeButton() {
   const on = cfg.awake !== false;
   return h('button', { class: 'awake' + (on ? ' on' : ''), 'aria-pressed': String(on), 'aria-label': on ? 'Écran toujours allumé : activé' : 'Écran toujours allumé : désactivé',
@@ -584,7 +597,7 @@ function viewHome() {
       h('h1', {}, todayName),
       h('div', { class: 'sub' }, `${prog.sessions[todayName].length} exercices${todayRec ? ` · ${setsDone(todayRec)} séries faites` : ''}`),
       h('div', { style: 'height:12px' }),
-      h('a', { class: 'btn', href: `#/seance/${encodeURIComponent(todayName)}/${today()}` }, todayRec ? 'Reprendre' : 'Commencer'),
+      h('a', { class: 'btn', href: `#/seance/${encodeURIComponent(todayName)}/${today()}`, onclick: () => { salleOn = true; } }, todayRec ? 'Reprendre' : 'Commencer'),
       more)
     : h('div', { class: 'card hero', onclick: toggleMore, role: 'button', 'aria-expanded': String(!!ui.homeMore) },
       h('div', { class: 'sub' }, `Aujourd'hui, ${JOURS[now.getDay()]}`),
@@ -592,8 +605,14 @@ function viewHome() {
       h('div', { class: 'sub' }, `Prochaine séance : ${nxt.day}, ${nxt.name}.`),
       more);
 
+  // Interrupteur du mode salle : ouvre la séance du jour (un jour de repos, la prochaine séance prévue).
+  const salleTarget = todayName || nxt?.name;
+  const salleRow = salleTarget ? h('div', { class: 'card salle-row' },
+    h('div', { class: 'grow' }, h('b', {}, 'Mode salle'), h('div', { class: 'sub' }, 'Seulement la séance en cours, sans les autres onglets')),
+    salleSwitch(() => { if (salleOn) go(`#/seance/${encodeURIComponent(salleTarget)}/${today()}`); else viewHome(); }, false)) : null;
   mount(
     h('div', { class: 'row between' }, h('h1', {}, 'Séance'), syncChip()),
+    salleRow,
     remindBanner(true),
     stepsCard(),
     // Carte du jour et compteur de la semaine côte à côte (poids dans Corps, séances passées dans Historique).
@@ -703,7 +722,7 @@ function viewSession(name, date) {
       h('div', { class: 'grow' }, h('h3', {}, ex.name, ex.extra ? h('span', { class: 'extra-tag' }, '+ Complément') : null, perSet(ex) ? h('span', { class: 'mode-tag' }, SET_MODES[ex.mode]) : null, prs[ex.id] ? h('span', { class: 'pr-tag' }, 'PR') : null, devTags), h('div', { class: 'sub' }, isCardio(ex) ? `${ex.lo === ex.hi ? ex.lo : `${ex.lo} à ${ex.hi}`} min${cardioNote(ex) ? ' · ' + cardioNote(ex) : ''}` : isPerso(ex) ? `${persoRepsTxt(ex)} · charge par rep${ex.note ? ' · ' + ex.note : ''}` : `${repsLabel(ex)}${ex.note ? ' · ' + ex.note : ''}`),
         ex.swapOf ? h('span', { class: 'swaptag' }, `⇄ à la place de ${ex.swapOf.name}`) : ex.stoppedFor ? h('span', { class: 'swaptag' }, `⇄ arrêté, suite avec ${ex.stoppedFor}`) : null),
       h('span', { class: 'count' }, `${nDone}/${entry.sets.length}`));
-    const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : ''), 'data-ex': ex.id },
+    const card = h('div', { class: 'card' + (nDone >= ex.sets ? ' done' : '') + (open ? ' open' : '') + (ui.sallePlus === ex.id ? ' plus' : ''), 'data-ex': ex.id },
       h('div', { class: 'ex-top' }, head, h('button', { class: 'qbtn', 'aria-label': `Fiche de l'exercice ${ex.name}`, onclick: () => openFiche(ex, id) }, '?')));
     if (!open) return card;
     card.append(h('div', { class: 'hint' }, sugs[ex.id].text));
@@ -810,7 +829,11 @@ function viewSession(name, date) {
     const mark = kind => () => { entry.load = entry.load === kind ? null : kind; commit(date, name, ex, entry); redraw(); };
     // La rangée commence sous le bord gauche des boutons kg (colonne numéro 14 px + écart 4 px) et tout y fait 40 px de haut.
     const actRow = 'margin-top:8px;gap:6px;align-items:stretch;padding-left:18px';
-    card.append(h('div', { class: 'row', style: actRow + ';flex-wrap:wrap' },
+    // Mode salle : réserve, boutons, ressenti et commentaire repliés derrière « Plus » (classe ex-more, style.css).
+    const plus = ui.sallePlus === ex.id;
+    card.append(h('button', { class: 'linkbtn salle-plus', 'aria-expanded': String(plus), onclick: () => { ui.sallePlus = plus ? null : ex.id; redraw(); } },
+      plus ? 'Moins ‹' : 'Plus : réserve, commentaire, remplacer ›'));
+    card.append(h('div', { class: 'row ex-more', style: actRow + ';flex-wrap:wrap' },
       h('button', { class: 'btn secondary small tight', onclick: () => { const last = entry.sets[entry.sets.length - 1]; const pl = last && (last.loads || (isPerso(ex) ? loadsAt(ex, entry.sets.length - 1) : null)); entry.sets.push({ kg: last?.kg ?? null, reps: pl ? pl.length : last?.reps ?? null, rir: '', done: false, ...(pl ? { loads: [...pl] } : {}) }); commit(date, name, ex, entry); redraw(); } }, '+ Série'),
       entry.sets.length > 1 ? h('button', { class: 'btn secondary small tight', onclick: () => { entry.sets.pop(); commit(date, name, ex, entry); redraw(); } }, '− Série') : null,
       h('a', { class: 'btn secondary small tight', href: `#/ex/${ex.id}` }, 'Historique'),
@@ -827,7 +850,7 @@ function viewSession(name, date) {
     note.addEventListener('input', fit);
     note.addEventListener('blur', () => { note.style.height = ''; });
     note.addEventListener('change', () => { const v = note.value.trim(); if (v) entry.comment = v; else delete entry.comment; commit(date, name, ex, entry); });
-    card.append(h('div', { class: 'row', style: actRow + ';align-items:flex-start' },
+    card.append(h('div', { class: 'row ex-more', style: actRow + ';align-items:flex-start' },
       loadIcon('up', entry.load === 'up', mark('up')),
       loadIcon('down', entry.load === 'down', mark('down')),
       note));
@@ -853,15 +876,24 @@ function viewSession(name, date) {
       // En pause, la séance se termine au moment de la pause ; si le chrono s'était arrêté seul, à la dernière série.
       k.end = k.pausedAt || clockEnd(db.sessions[id], now); k.pausedAt = null;
     });
-    stopTimer(); redraw();
+    stopTimer();
+    if (salleOn) { setSalle(false); toast('Séance terminée : mode salle désactivé'); }
+    redraw();
   };
+  document.body.classList.toggle('salle', salleOn);
+  // Mode salle (version A) : en-tête compact (séance, séries, chrono), sans barre d'onglets ni carte du chrono.
+  const head = salleOn
+    ? h('div', { class: 'salle-head' },
+      h('div', { class: 'grow' }, h('b', {}, name), h('div', { class: 'sub' }, `${done}/${total} séries · `, h('b', { 'data-clock': id }, fmtClock(sessionDuration(rec))))),
+      awakeButton(), salleSwitch(() => redraw()))
+    : [h('div', { class: 'row between' }, h('a', { href: '#/' }, '‹ Accueil'), h('div', { class: 'row' }, awakeButton(), syncChip())),
+      h('div', { class: 'salle-title' }, h('h1', {}, name), salleSwitch(() => redraw())),
+      h('div', { class: 'sub' }, `${cap(fmtDateLong(date))} · ${done}/${total} séries${rec ? ' · ' + sessionVolume(rec).toLocaleString('fr-FR') + ' kg de volume' : ''}`),
+      h('div', { class: 'sclock' + (clockLive(rec) ? ' live' : '') },
+        h('div', { class: 't' }, h('span', { 'data-clock': id }, fmtClock(sessionDuration(rec))), h('small', {}, clockSub)),
+        clockBtn)];
   mount(
-    h('div', { class: 'row between' }, h('a', { href: '#/' }, '‹ Accueil'), h('div', { class: 'row' }, awakeButton(), syncChip())),
-    h('h1', {}, name),
-    h('div', { class: 'sub' }, `${cap(fmtDateLong(date))} · ${done}/${total} séries${rec ? ' · ' + sessionVolume(rec).toLocaleString('fr-FR') + ' kg de volume' : ''}`),
-    h('div', { class: 'sclock' + (clockLive(rec) ? ' live' : '') },
-      h('div', { class: 't' }, h('span', { 'data-clock': id }, fmtClock(sessionDuration(rec))), h('small', {}, clockSub)),
-      clockBtn),
+    head,
     cards,
     ended ? null : h('button', { class: 'btn add-ex', onclick: () => openAddExercise(id, list.map(e => e.id), name, exId => {
       addExtra(date, name, exId); ui.active = exId; redraw();
@@ -873,9 +905,9 @@ function viewSession(name, date) {
       h('div', { class: 'sub' }, `${fmtMin(sessionDuration(rec))} · ${done} série${done > 1 ? 's' : ''} · ${fmtHour(c.start)} → ${fmtHour(c.end)}`),
       h('div', { style: 'height:10px' }),
       h('a', { class: 'btn secondary', href: '#/' }, 'Retour à l\'accueil')) : null,
-    recordsCard(list, prs, ex => { ui.active = ex.id; redraw(); document.querySelector(`[data-ex="${ex.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }),
+    salleOn ? null : recordsCard(list, prs, ex => { ui.active = ex.id; redraw(); document.querySelector(`[data-ex="${ex.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }),
     // Suppression de la séance (confirmation dans un volet) : seulement s'il y a quelque chose à supprimer.
-    rec && (done || rec.clock?.start || Object.values(rec.entries || {}).some(e => e.comment))
+    !salleOn && rec && (done || rec.clock?.start || Object.values(rec.entries || {}).some(e => e.comment))
       ? h('button', { class: 'linkbtn danger del-sess', onclick: () => confirmDeleteSession(rec) }, 'Supprimer cette séance') : null);
 }
 function confirmDeleteSession(rec) {
@@ -2959,6 +2991,7 @@ function render() {
   const st = accessState();
   if (st !== 'ok') return viewGate(st);
   document.body.classList.remove('gate');
+  document.body.classList.toggle('salle', salleOn && location.hash.startsWith('#/seance/')); // mode salle : seulement sur la séance
   if (location.hash.startsWith('#/ex/') && !lastHash.startsWith('#/ex/')) exFrom = lastHash;
   lastHash = location.hash;
   const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
