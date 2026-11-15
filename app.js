@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '78 (mode salle)';
+const APP_VERSION = '79 (interrupteur du mode salle sur la ligne du titre)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -605,14 +605,12 @@ function viewHome() {
       h('div', { class: 'sub' }, `Prochaine séance : ${nxt.day}, ${nxt.name}.`),
       more);
 
-  // Interrupteur du mode salle : ouvre la séance du jour (un jour de repos, la prochaine séance prévue).
+  // Interrupteur du mode salle, sur la ligne du titre comme dans la séance : ouvre la séance du jour
+  // (un jour de repos, la prochaine séance prévue).
   const salleTarget = todayName || nxt?.name;
-  const salleRow = salleTarget ? h('div', { class: 'card salle-row' },
-    h('div', { class: 'grow' }, h('b', {}, 'Mode salle'), h('div', { class: 'sub' }, 'Seulement la séance en cours, sans les autres onglets')),
-    salleSwitch(() => { if (salleOn) go(`#/seance/${encodeURIComponent(salleTarget)}/${today()}`); else viewHome(); }, false)) : null;
   mount(
-    h('div', { class: 'row between' }, h('h1', {}, 'Séance'), syncChip()),
-    salleRow,
+    h('div', { class: 'salle-title home' }, h('h1', {}, 'Séance'),
+      h('div', { class: 'row' }, salleTarget ? salleSwitch(() => { if (salleOn) go(`#/seance/${encodeURIComponent(salleTarget)}/${today()}`); else viewHome(); }) : null, syncChip())),
     remindBanner(true),
     stepsCard(),
     // Carte du jour et compteur de la semaine côte à côte (poids dans Corps, séances passées dans Historique).
