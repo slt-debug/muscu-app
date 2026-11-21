@@ -673,3 +673,8 @@ body.salle .salle-plus { display: block; margin-top: 6px; padding: 8px 2px 0 18p
 .supp-sw select:disabled { opacity: .45; }
 .supp-acts { gap: 10px; margin-top: 6px; }
 .supp-acts .btn.danger { width: auto; padding-inline: 18px; }
+/* Minuteur (v83) : −X à gauche du temps, +X à droite ; pas de 5 à 60 s dans le réglage */
+#timer .t { text-align: center; }
+#timer button { padding: 0 10px; }
+.seg5 { grid-template-columns: repeat(5, 1fr); }
+.seg5 button { font-size: 14px; padding: 0 2px; }

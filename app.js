@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '82 (compléments : jours oubliés plus visibles en thème sombre)';
+const APP_VERSION = '83 (minuteur : bouton pour réduire le repos, pas réglables)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -353,7 +353,19 @@ function startTimer(seconds, label, sid) {
   tickTimer();
 }
 function stopTimer() { timer = null; renderTimer(); }
-function addTimer30() { timer.end += 30000; timer.total += 30; timer.shown = null; tickTimer(); }
+// Boutons −X / +X du bandeau (v83) : pas réglés dans Réglages › Minuteur de repos (cfg.restMinus, cfg.restPlus).
+// Les signaux encore à venir après le changement peuvent rejouer ; réduire sous zéro termine le repos.
+const REST_STEPS = [5, 10, 15, 30, 60];
+const restStep = k => REST_STEPS.includes(cfg[k]) ? cfg[k] : (k === 'restMinus' ? 15 : 30);
+function shiftTimer(sec) {
+  if (!timer) return;
+  const now = Date.now();
+  timer.end = Math.max(now, timer.end + sec * 1000);
+  timer.total = Math.max(1, timer.total + sec);
+  const left = (timer.end - now) / 1000;
+  for (const e of timerSignals(cfg.sound, timer.total)) if (e.left < left) timer.played.delete(e.kind + e.left);
+  timer.shown = null; tickTimer();
+}
 function tickTimer() {
   if (!timer) return;
   const exact = (timer.end - Date.now()) / 1000;
@@ -377,11 +389,13 @@ function renderTimer() {
     return;
   }
   timerEl.className = left <= 10 ? 'warn' : '';
+  const minus = restStep('restMinus'), plus = restStep('restPlus');
   timerEl.replaceChildren(
+    h('button', { class: 'gear', 'aria-label': 'Réglages du minuteur', onclick: openRestSheet }, gearIcon()),
+    h('button', { 'aria-label': `Réduire le repos de ${minus} secondes`, onclick: () => shiftTimer(-minus) }, `−${minus} s`),
     h('div', { class: 't' }, `${Math.floor(left / 60)}:${pad2(left % 60)}`,
       db.sessions[timer.sid]?.clock?.start ? h('small', {}, 'Séance ', h('span', { 'data-clock': timer.sid }, fmtClock(sessionDuration(db.sessions[timer.sid])))) : null),
-    h('button', { class: 'gear', 'aria-label': 'Réglages du minuteur', onclick: openRestSheet }, gearIcon()),
-    h('button', { onclick: addTimer30 }, '+30 s'),
+    h('button', { 'aria-label': `Allonger le repos de ${plus} secondes`, onclick: () => shiftTimer(plus) }, `+${plus} s`),
     h('button', { onclick: stopTimer }, 'Stop'));
 }
 setInterval(tickTimer, 100);
@@ -3034,7 +3048,12 @@ function restControls(compact = false) {
   const timbres = radios(Object.entries(TIMBRES).map(([k, t]) => [k, t.label]), k => TIMBRES[k] === timbre(), k => {
     cfg.timbre = k; store(SKEY, cfg); previewSound();
   }, 'seg seg3');
-  profiles.paint(); timbres.paint();
+  // Pas des boutons −X / +X du bandeau ; le bandeau se redessine tout de suite s'il est affiché.
+  const stepGroup = key => radios(REST_STEPS.map(v => [String(v), `${v} s`]), k => Number(k) === restStep(key), k => {
+    cfg[key] = Number(k); store(SKEY, cfg); renderTimer();
+  }, 'seg seg5');
+  const minusSteps = stepGroup('restMinus'), plusSteps = stepGroup('restPlus');
+  profiles.paint(); timbres.paint(); minusSteps.paint(); plusSteps.paint();
   const volLabel = h('span', {}, `Volume : ${Math.round(cfg.volume * 100)} %`);
   const volIn = h('input', { type: 'range', min: '10', max: '100', step: '5', value: String(Math.round(cfg.volume * 100)) });
   volIn.addEventListener('input', () => { cfg.volume = volIn.value / 100; volLabel.textContent = `Volume : ${volIn.value} %`; });
@@ -3045,6 +3064,10 @@ function restControls(compact = false) {
     h('h3', { class: 'sub3' }, 'Signaux'), compact ? null : soundHelp, profiles.el,
     h('h3', { class: 'sub3' }, 'Son'), compact ? null : timbreHelp, timbres.el,
     h('label', { class: 'vol' }, volLabel, volIn),
+    h('h3', { class: 'sub3' }, 'Boutons du bandeau'),
+    compact ? null : h('p', { class: 'sub' }, 'Ce qu\'enlève ou ajoute un toucher pendant un repos. Réduire plus que le temps restant termine le repos.'),
+    h('div', { class: 'sub' }, 'Réduire le repos'), minusSteps.el,
+    h('div', { class: 'sub' }, 'Allonger le repos'), plusSteps.el,
     compact ? null : [
       h('button', { class: 'btn secondary', onclick: () => {
         previewSound();
