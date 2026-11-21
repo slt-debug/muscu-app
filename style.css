@@ -628,3 +628,48 @@ body.salle .salle-plus { display: block; margin-top: 6px; padding: 8px 2px 0 18p
 .salle-top .row { gap: 8px; flex-wrap: nowrap; min-width: 0; }
 .salle-top > a { flex: none; }
 .salle-head { align-items: flex-start; margin-top: 0; }
+/* Corps : sélecteur Mesures | Nutrition (v81) */
+.corps-seg { margin: 8px 0 4px; }
+.corps-seg a { display: block; text-align: center; padding: 8px 2px; border-radius: 8px; font-weight: 600; font-size: 15px; color: var(--ink-2); text-decoration: none; }
+.corps-seg a.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+/* Nutrition : prises du jour, liste des compléments, fiche */
+.supp-today { padding-bottom: 6px; }
+.supp-moment { font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; padding: 10px 0 2px; }
+.supp-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 50px; padding: 4px 0; background: none; border: 0; border-top: 1px solid var(--grid); font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.supp-row .tick { flex: none; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--axis); display: grid; place-items: center; }
+.supp-row .tick svg { width: 15px; height: 15px; fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+.supp-row.on .tick { background: var(--good); border-color: var(--good); }
+.supp-row.on .tick svg { opacity: 1; }
+.supp-row.on b { color: var(--ink-2); }
+.supp-row b { display: block; font-size: 16px; }
+.supp-row small { display: block; font-size: 13px; color: var(--ink-2); }
+.supp-row .dose { font-weight: 700; white-space: nowrap; }
+.supp-h { margin-top: 18px; }
+.supp-h h2 { margin: 0; }
+.supp-list { padding: 0; }
+.supp-item { display: flex; align-items: center; gap: 10px; padding: 11px 14px; color: var(--ink); text-decoration: none; }
+.supp-item + .supp-item { border-top: 1px solid var(--grid); }
+.supp-item b { display: block; font-size: 16px; }
+.supp-item .chev { color: var(--muted); font-size: 22px; }
+.pause-tag { margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--warn-ink); background: var(--warn-bg); border-radius: 99px; padding: 2px 8px; vertical-align: 2px; }
+.supp-bars { display: flex; align-items: center; gap: 2px; margin-top: 5px; }
+.supp-bars i, .supp-legend i { flex: none; width: 6px; height: 12px; border-radius: 2px; background: var(--field); box-shadow: inset 0 0 0 1px var(--grid); }
+.supp-bars i.ok, .supp-legend i.ok { background: var(--good); box-shadow: none; }
+.supp-bars i.miss, .supp-legend i.miss { background: var(--axis); box-shadow: none; }
+.supp-bars small { margin-left: 6px; font-size: 12px; color: var(--ink-2); }
+.supp-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--ink-2); padding: 0 4px; }
+.supp-legend i { display: inline-block; margin-right: 4px; vertical-align: -2px; }
+.supp-soon { border-style: dashed; }
+.supp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 12px; }
+.supp-chips button { min-height: 40px; padding: 0 14px; border-radius: 99px; border: 1px solid var(--grid); background: var(--card); color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.supp-chips button.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.supp-days { margin-top: 6px; }
+.supp-days button { font-size: 13px; }
+.supp-sw { padding: 4px 14px; }
+.supp-sw .row { min-height: 58px; gap: 10px; }
+.supp-sw .row + .row { border-top: 1px solid var(--grid); }
+.supp-sw small { display: block; font-size: 13px; color: var(--ink-2); }
+.supp-sw select { min-height: 40px; border: 1px solid var(--grid); border-radius: 10px; background: var(--field); color: var(--ink); padding: 0 8px; font: inherit; font-weight: 700; }
+.supp-sw select:disabled { opacity: .45; }
+.supp-acts { gap: 10px; margin-top: 6px; }
+.supp-acts .btn.danger { width: auto; padding-inline: 18px; }
