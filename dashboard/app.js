@@ -7,7 +7,7 @@
 // On recharge alors une fois tous les fichiers en contournant le cache ; sinon, message plutôt que page blanche.
 (() => {
   const ok = typeof rangeAt === 'function' && typeof perSetPlan === 'function' && typeof SET_MODES !== 'undefined'
-    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function' && typeof pingUsage === 'function' && typeof adherenceWeek === 'function' && typeof kgForReps === 'function' && typeof isPerso === 'function' && typeof setVolume === 'function' && typeof progApply === 'function';
+    && typeof TEMPLATES !== 'undefined' && typeof mergeData === 'function' && typeof CATALOG !== 'undefined' && typeof LIBRARY !== 'undefined' && typeof checkAccess === 'function' && typeof pingUsage === 'function' && typeof adherenceWeek === 'function' && typeof kgForReps === 'function' && typeof isPerso === 'function' && typeof setVolume === 'function' && typeof progApply === 'function' && typeof suppMerge === 'function' && typeof suppDue === 'function';
   const FLAG = 'muscu.dash.refetch';
   let tried = false;
   try { tried = sessionStorage.getItem(FLAG) === '1'; if (ok) sessionStorage.removeItem(FLAG); else sessionStorage.setItem(FLAG, '1'); } catch { /* stockage indisponible */ }
@@ -140,6 +140,7 @@ async function load() {
     if (acc) pingUsage(`dashboard/${usageLabel(acc.hash)}`, `${(document.querySelector('script[src*="app.js?v="]')?.src.match(/v=(\w+)/) || [])[1] || ''} · ${deviceKind()}`);
     const [d, p, a, r, g, w] = await Promise.all([api('/api/data'), api('/api/programs').catch(() => null), api('/api/activity').catch(() => null), api('/api/reminders').catch(() => null),
       api('/api/goals').catch(() => null), api('/api/withings').catch(() => null)]);
+    await loadSupp();
     data = { sessions: d.sessions || {}, body: d.body || {} };
     goals = g; wStatus = w;
     steps = a?.days || {};
@@ -786,7 +787,7 @@ function sourceCell(b) {
 let wst = null, wBusy = false, wMsg = '';
 async function loadWithings() {
   try { wst = await api('/api/withings'); } catch (e) { wst = { error: e.message }; }
-  if (location.hash.startsWith('#/corps')) viewBody();
+  if (/^#\/corps\/?$/.test(location.hash)) viewBody();
 }
 const wpost = (p, body) => api(p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muscu': '1' }, body: JSON.stringify(body || {}) });
 function withingsPanel() {
@@ -860,7 +861,7 @@ function reminderCard() {
 }
 
 function viewBody() {
-  setTab('body');
+  setTab('body'); setCorpsSub('mesures');
   const list = liveBody();
   const fDate = h('input', { type: 'date', value: today() });
   const fP = h('input', { class: 'n', placeholder: 'kg', inputmode: 'decimal' });
@@ -905,7 +906,7 @@ function viewBody() {
   ].filter(Boolean);
 
   mount(
-    h('h2', { style: 'margin-top:0' }, 'Corps'),
+    corpsHead('mesures'),
     reminderCard(),
     withingsPanel(),
     h('div', { class: 'card' },
@@ -925,6 +926,181 @@ function viewBody() {
         h('td', {}, sourceCell(b)),
         MEASURES.map(m => h('td', {}, field(b, m.key))),
         h('td', {}, h('button', { class: 'btn small danger', onclick: () => { if (confirm('Supprimer cette mesure ?')) { touch('body', { id: b.id, date: b.date, deleted: true }); viewBody(); } } }, 'Supprimer')))))) : h('div', { class: 'card empty' }, 'Aucune mesure.'));
+}
+
+// ---------- Corps › Nutrition : compléments alimentaires (dashboard du 22/11/2026) ----------
+// Mêmes données (supplements.json) et mêmes règles (reminder.js) que l'iPhone, Corps › Nutrition. Chaque écriture
+// envoie la copie de la page, fusionnée avec le fichier par suppMerge : le plus récent gagne, fiche par fiche et
+// prise par prise. En plus de l'iPhone : un clic sur une case de la grille 30 jours corrige un jour passé.
+const CORPS_KEY = 'muscu.dash.corps';
+const SUPP_UNITS = ['g', 'mg', 'µg', 'UI', 'gélules', 'comprimés', 'doses', 'ml'];
+const SUPP_HOUR = { matin: 8, midi: 12, avant: 17, apres: 20, soir: 21 };
+let supp = { items: {}, log: {} }, suppOk = false, suppErr = '', suppQueue = Promise.resolve(), suppBusy = 0;
+// Dernière rubrique de Corps ouverte : l'onglet Corps y revient (comme l'iPhone).
+function setCorpsSub(sub) {
+  try { localStorage.setItem(CORPS_KEY, sub); } catch { /* stockage indisponible */ }
+  const a = document.querySelector('#tabs a[data-tab="body"]');
+  if (a) a.href = sub === 'nutrition' ? '#/corps/nutrition' : '#/corps';
+}
+const corpsHead = cur => h('div', { class: 'row corps-head' }, h('h2', {}, 'Corps'),
+  h('nav', { class: 'corps-seg', 'aria-label': 'Rubrique' }, [['mesures', '#/corps', 'Mesures'], ['nutrition', '#/corps/nutrition', 'Nutrition']].map(([k, href, t]) =>
+    h('a', { href, class: k === cur ? 'on' : null, 'aria-current': k === cur ? 'page' : null }, t))));
+async function loadSupp() {
+  try {
+    const r = await api('/api/supplements');
+    supp = { items: r.items || {}, log: r.log || {}, trainDays: r.trainDays || null, updatedAt: r.updatedAt || 0 };
+    suppOk = true; suppErr = '';
+  } catch (e) { suppOk = false; suppErr = e.message; }
+}
+const isTrainDay = d => !!programFor(d).days?.[parseYmd(d).getDay()];
+const trainDaysNow = () => { const ds = programFor(today()).days || {}; return [0, 1, 2, 3, 4, 5, 6].filter(d => ds[d]); };
+const momentLabel = m => (SUPP_MOMENTS.find(x => x[0] === m) || [])[1] || '';
+const suppItems = () => Object.values(supp.items || {}).filter(it => !it.deleted)
+  .sort((a, b) => SUPP_MOMENTS.findIndex(m => m[0] === a.moment) - SUPP_MOMENTS.findIndex(m => m[0] === b.moment) || (a.from || '').localeCompare(b.from || '') || a.name.localeCompare(b.name));
+// Modification locale puis envoi (un à la fois, dans l'ordre). La page est redessinée tout de suite.
+function suppSave(mut) {
+  if (!suppOk) return;
+  mut(); supp.updatedAt = Date.now(); supp.trainDays = trainDaysNow();
+  const snap = clone(supp);
+  suppBusy++; setStatus('Modifié, enregistrement…');
+  suppQueue = suppQueue.then(async () => {
+    try {
+      const res = await api('/api/supplements', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Muscu': '1' }, body: JSON.stringify(snap) });
+      supp = suppMerge(res, supp);
+      if (suppBusy === 1) setStatus('Enregistré ' + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }), 'ok');
+    } catch (e) { setStatus('Échec de l\'enregistrement des compléments : ' + e.message + ' (Actualiser pour relire le fichier)', 'err'); }
+    suppBusy--;
+    if (location.hash.startsWith('#/corps/nutrition') && !document.querySelector('.modal-wrap')) viewNutrition();
+  });
+}
+window.addEventListener('beforeunload', e => { if (suppBusy) { e.preventDefault(); e.returnValue = ''; } });
+function suppToggleDay(it, d) {
+  const on = suppTaken(supp, d, it.id);
+  suppSave(() => { supp.log = supp.log || {}; supp.log[d] = { ...(supp.log[d] || {}), [it.id]: { on: !on, u: Date.now() } }; });
+  viewNutrition();
+}
+function viewNutrition() {
+  setTab('body'); setCorpsSub('nutrition');
+  const d0 = today(), items = suppItems();
+  const days = Array.from({ length: 30 }, (_, i) => addDays(d0, i - 29));
+  const train = Object.fromEntries(days.map(d => [d, isTrainDay(d)]));
+  // État de chaque jour : 'ok' pris, 'miss' oublié, 'todo' aujourd'hui pas encore pris, 'n' pas prévu (ou en pause).
+  const stats = items.map(it => {
+    const cells = days.map(d => !suppDue(it, d, train[d]) ? 'n' : suppTaken(supp, d, it.id) ? 'ok' : d === d0 ? 'todo' : 'miss');
+    return { it, cells, ok: cells.filter(c => c === 'ok').length, miss: cells.filter(c => c === 'miss').length };
+  });
+  const dueToday = stats.filter(x => x.cells[29] !== 'n'), doneToday = dueToday.filter(x => x.cells[29] === 'ok').length;
+  const okAll = stats.reduce((n, x) => n + x.ok, 0), missAll = stats.reduce((n, x) => n + x.miss, 0);
+  const worst = stats.filter(x => x.miss).sort((a, b) => b.miss - a.miss)[0];
+  const rems = items.filter(it => it.remind != null && !suppPaused(it, d0)).sort((a, b) => a.remind - b.remind);
+  const pct = (ok, miss) => ok + miss ? `${Math.round(100 * ok / (ok + miss))} %` : '–';
+  const pauseTag = it => suppPaused(it, d0) ? h('span', { class: 'pause-tag' }, 'En pause') : null;
+  const W = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+  const STATE = { ok: 'pris', miss: 'oublié', todo: 'pas encore pris', n: 'pas prévu' };
+  const cell = (it, c, d) => {
+    const title = `${it.name}, ${fmtDateLong(d)} : ${STATE[c]}`;
+    if (c === 'n') return h('td', { class: 'c' }, h('span', { class: 'sc n' + (d === d0 ? ' now' : ''), title }));
+    return h('td', { class: 'c' }, h('button', { type: 'button', class: `sc ${c}${d === d0 ? ' now' : ''}`, title, 'aria-label': title, 'aria-pressed': String(c === 'ok'), disabled: !suppOk, onclick: () => suppToggleDay(it, d) }));
+  };
+  const addBtn = h('button', { class: 'btn', disabled: !suppOk, onclick: () => suppForm(null) }, '+ Ajouter un complément');
+  mount(
+    corpsHead('nutrition'),
+    suppOk ? null : h('div', { class: 'card sub err' }, `Compléments illisibles : ${suppErr || 'erreur inconnue'}. Rien ne peut être modifié ; Actualiser pour réessayer.`),
+    items.length ? [
+      h('div', { class: 'tiles' },
+        tile('Aujourd\'hui', dueToday.length ? `${doneToday}/${dueToday.length}` : '–', dueToday.length ? 'prises cochées' : 'aucune prise prévue'),
+        tile('Régularité 30 jours', pct(okAll, missAll), okAll + missAll ? `${okAll} prise${okAll > 1 ? 's' : ''} sur ${okAll + missAll} prévue${okAll + missAll > 1 ? 's' : ''}` : 'rien de prévu'),
+        tile('Le plus oublié', worst ? worst.it.name : 'Aucun oubli', worst ? `${worst.miss} oubli${worst.miss > 1 ? 's' : ''} en 30 jours` : 'en 30 jours', 'name'),
+        tile('Rappels ntfy', rems.length ? `${rems.length} actif${rems.length > 1 ? 's' : ''}` : 'Aucun', rems.length ? rems.map(it => `${it.name} à ${it.remind} h`).join(', ') : 'réglés dans chaque fiche', 'name')),
+      h('div', { class: 'row between supp-h' }, h('h2', {}, 'Prises des 30 derniers jours'), h('span', { class: 'sub' }, 'Clique une case pour corriger un oubli ou une prise notée par erreur')),
+      h('div', { class: 'card' },
+        h('div', { class: 'supp-grid-wrap' }, h('table', { class: 'supp-grid' },
+          h('tr', {}, h('th', {}, 'Complément'),
+            days.map(d => h('th', { class: 'day' + (train[d] ? ' train' : ''), title: cap(fmtDateLong(d)) + (train[d] ? ' · jour de séance' : '') }, W[parseYmd(d).getDay()], h('br'), String(parseYmd(d).getDate()))),
+            h('th', { class: 'num' }, '30 j')),
+          stats.map(({ it, cells, ok, miss }) => h('tr', {},
+            h('td', { class: 'name' }, h('b', {}, it.name), pauseTag(it), h('small', {}, [suppDoseTxt(it), momentLabel(it.moment)].filter(Boolean).join(' · '))),
+            cells.map((c, i) => cell(it, c, days[i])),
+            h('td', { class: 'num' }, h('b', {}, pct(ok, miss))))))),
+        h('div', { class: 'supp-legend' }, h('span', {}, h('i', { class: 'ok' }), 'pris'), h('span', {}, h('i', { class: 'miss' }), 'oublié'), h('span', {}, h('i', {}), 'pas prévu ou en pause'),
+          h('span', {}, '· cadre : aujourd\'hui · jours de séance en bleu'))),
+      h('div', { class: 'row between supp-h' }, h('h2', {}, 'Mes compléments'), addBtn),
+      h('div', { class: 'card' }, h('div', { class: 'supp-grid-wrap' }, h('table', {},
+        h('tr', {}, ['Nom', 'Dose', 'Moment', 'Jours', 'Consigne', 'Rappel', 'Depuis', ''].map(t => h('th', {}, t))),
+        items.map(it => h('tr', {},
+          h('td', {}, h('b', {}, it.name), pauseTag(it)), h('td', {}, suppDoseTxt(it) || '–'), h('td', {}, momentLabel(it.moment)),
+          h('td', {}, (SUPP_DAYS.find(x => x[0] === it.days) || [])[1] || ''), h('td', { class: 'sub' }, it.note || '–'),
+          h('td', {}, it.remind != null ? `${it.remind} h` : '–'), h('td', {}, it.from ? fmtDate(it.from) : '–'),
+          h('td', { class: 'num' }, h('button', { class: 'btn small secondary', disabled: !suppOk, onclick: () => suppForm(it.id) }, 'Modifier'))))))),
+    ] : [
+      h('div', { class: 'row between supp-h' }, h('h2', {}, 'Mes compléments'), addBtn),
+      h('div', { class: 'card empty' }, 'Aucun complément pour l\'instant. Ajoute ceux que tu prends : une case à cocher chaque jour (ici ou sur l\'iPhone), et un rappel sur le téléphone si tu veux.'),
+    ],
+    h('div', { class: 'row between supp-h' }, h('h2', {}, 'Macros'), h('span', { class: 'sub' }, 'plus tard')),
+    h('div', { class: 'card sub supp-soon' }, 'Place réservée au suivi des macros (protéines, glucides, lipides, calories), comme sur l\'iPhone.'));
+}
+// Fiche d'un complément, en fenêtre (id null : nouveau). Mêmes champs et mêmes règles que la fiche de l'iPhone.
+function suppForm(id) {
+  const cur = id ? supp.items?.[id] : null;
+  if (id && (!cur || cur.deleted)) return;
+  const f = cur ? { ...cur } : { name: '', dose: null, unit: 'g', moment: 'matin', days: 'all', note: '', remind: null };
+  const d0 = today(), wasPaused = !!cur && suppPaused(cur, d0);
+  const units = SUPP_UNITS.includes(f.unit) || !f.unit ? SUPP_UNITS : [...SUPP_UNITS, f.unit];
+  const iName = h('input', { type: 'text', value: f.name, placeholder: 'ex. Créatine' });
+  const iDose = h('input', { type: 'text', inputmode: 'decimal', value: f.dose != null ? fmtKg(f.dose) : '', placeholder: 'ex. 5' });
+  const iUnit = h('select', {}, units.map(u => h('option', { value: u, selected: u === f.unit }, u)));
+  const iNote = h('input', { type: 'text', value: f.note || '', placeholder: 'ex. avec un repas' });
+  const tRem = h('input', { type: 'checkbox', checked: f.remind != null });
+  const iHour = h('select', { 'aria-label': 'Heure du rappel', disabled: f.remind == null }, Array.from({ length: 18 }, (_, i) => i + 5).map(x => h('option', { value: String(x) }, `${x} h`)));
+  iHour.value = String(f.remind ?? SUPP_HOUR[f.moment] ?? 8);
+  tRem.addEventListener('change', () => { iHour.disabled = !tRem.checked; });
+  const tPause = h('input', { type: 'checkbox', checked: wasPaused });
+  // Choix exclusif sans redessiner la fenêtre (les champs saisis restent).
+  const choice = (opts, key) => {
+    const wrap = h('div', { class: 'seg', role: 'group' });
+    const paint = () => wrap.querySelectorAll('button').forEach(b => { const on = b.dataset.v === f[key]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+    opts.forEach(([v, t]) => wrap.append(h('button', { type: 'button', 'data-v': v, onclick: () => { f[key] = v; paint(); if (key === 'moment' && !tRem.checked) iHour.value = String(SUPP_HOUR[v]); } }, t)));
+    paint(); return wrap;
+  };
+  const msg = h('p', { class: 'sub err', role: 'status' });
+  const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey); viewNutrition(); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  const saveIt = () => {
+    const name = iName.value.trim();
+    if (!name) { msg.textContent = 'Donne un nom au complément.'; iName.focus(); return; }
+    const dose = iDose.value.trim() === '' ? null : num(iDose.value);
+    if (iDose.value.trim() !== '' && (dose == null || dose <= 0)) { msg.textContent = 'Dose : un nombre, par exemple 5 ou 2,5.'; iDose.focus(); return; }
+    const paused = tPause.checked, off = (cur?.off || []).map(p => p.slice());
+    if (paused && !wasPaused) off.push([d0, null]);
+    if (!paused && wasPaused) { const p = off.find(([a, b]) => d0 >= a && (b == null || d0 < b)) || off.find(([, b]) => b == null); if (p) { if (p[0] >= d0) off.splice(off.indexOf(p), 1); else p[1] = d0; } }
+    const nid = cur?.id || 's' + Date.now().toString(36);
+    const it = { id: nid, name, dose, unit: iUnit.value, moment: f.moment, days: f.days, note: iNote.value.trim(), remind: tRem.checked ? Number(iHour.value) : null,
+      off, from: cur?.from || d0, deleted: false, u: Date.now() };
+    suppSave(() => { supp.items = { ...(supp.items || {}), [nid]: it }; });
+    close();
+  };
+  const del = () => {
+    if (!confirm(`Supprimer « ${cur.name} » ? Il disparaît de la liste et des rappels, ici et sur l'iPhone.`)) return;
+    suppSave(() => { supp.items = { ...supp.items, [cur.id]: { ...cur, deleted: true, u: Date.now() } }; });
+    close();
+  };
+  const field = (label, input) => h('label', { class: 'field' }, h('span', {}, label), input);
+  const wrap = h('div', { class: 'modal-wrap', onclick: e => { if (e.target === wrap) close(); } },
+    h('div', { class: 'card modal supp-form', role: 'dialog', 'aria-label': cur ? `Modifier ${cur.name}` : 'Nouveau complément' },
+      h('div', { class: 'row between' }, h('h3', { style: 'margin:0' }, cur ? cur.name : 'Nouveau complément'), h('button', { class: 'ico', title: 'Fermer', 'aria-label': 'Fermer', onclick: close }, '✕')),
+      h('div', { class: 'supp-f3' }, field('Nom', iName), field('Dose', iDose), field('Unité', iUnit)),
+      h('div', { class: 'field' }, h('span', {}, 'Moment'), choice(SUPP_MOMENTS, 'moment')),
+      h('div', { class: 'field' }, h('span', {}, 'Jours'), choice(SUPP_DAYS, 'days')),
+      field('Consigne (facultatif)', iNote),
+      h('div', { class: 'supp-sw' },
+        h('label', { class: 'row' }, h('span', { class: 'grow' }, h('b', {}, 'Rappel'), h('small', {}, 'Notification ntfy si pas coché à l\'heure dite')), iHour, tRem),
+        cur ? h('label', { class: 'row' }, h('span', { class: 'grow' }, h('b', {}, 'En pause'), h('small', {}, 'Masqué du jour, sans compter d\'oubli')), tPause) : null),
+      msg,
+      h('div', { class: 'row' }, h('button', { class: 'btn', onclick: saveIt }, 'Enregistrer'), h('button', { class: 'btn secondary', onclick: close }, 'Annuler'),
+        h('span', { class: 'grow' }), cur ? h('button', { class: 'btn danger', onclick: del }, 'Supprimer') : null)));
+  document.body.append(wrap);
+  document.addEventListener('keydown', onKey);
+  iName.focus();
 }
 
 // ---------- Bibliothèque d'exercices (library.js, partagée avec l'appli iPhone) ----------
@@ -1599,7 +1775,7 @@ function render() {
   window.scrollTo(0, 0);
   switch (parts[0]) {
     case 'seances': return parts[1] ? viewSessionEdit(parts[1]) : viewSessions();
-    case 'corps': return viewBody();
+    case 'corps': return parts[1] === 'nutrition' ? viewNutrition() : viewBody();
     case 'exercices': return viewExercises(parts[1]);
     case 'programme': return parts[1] === 'modifier' ? viewProgramEdit() : parts[1] === 'historique' ? viewProgramHistory() : viewProgram();
     case 'vue': return viewOverview();
@@ -1609,4 +1785,5 @@ function render() {
 }
 window.addEventListener('hashchange', () => { editing = null; render(); }); // un formulaire déplié se referme en changeant d'onglet
 showAccount();
+try { setCorpsSub(localStorage.getItem(CORPS_KEY) || 'mesures'); } catch { /* stockage indisponible */ }
 if (dcfgOk()) load(); else viewLogin();

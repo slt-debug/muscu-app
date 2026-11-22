@@ -379,3 +379,50 @@ a.back { margin: 0 0 10px; }
 .gap-lo { color: var(--warn); font-weight: 700; }
 .gap-hi { color: var(--accent); font-weight: 700; }
 td .flag { font-weight: 800; }
+
+/* ---------- Corps : sélecteur Mesures | Nutrition et compléments (dashboard du 22/11/2026, mêmes règles que l'iPhone) ---------- */
+.corps-head { gap: 16px; margin-bottom: 12px; }
+.corps-head h2 { margin: 0; }
+.corps-seg { flex: none; display: inline-grid; grid-template-columns: 1fr 1fr; width: 260px; background: var(--field); border: 1px solid var(--grid); border-radius: 10px; padding: 3px; gap: 0; }
+.corps-seg a { height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; color: var(--ink-2); text-decoration: none; padding: 0; }
+.corps-seg a.on { background: var(--card); color: var(--ink); font-weight: 700; box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+.big.name { font-size: 20px; padding: 6px 0 3px; overflow-wrap: anywhere; }
+.supp-h { margin: 26px 0 10px; }
+.supp-h h2 { margin: 0; }
+.supp-grid-wrap { overflow-x: auto; }
+.supp-grid { width: auto; border-collapse: separate; border-spacing: 3px; }
+.supp-grid th, .supp-grid td { border: 0; padding: 0; }
+.supp-grid th { text-align: left; }
+.supp-grid th.day { width: 22px; text-align: center; font-size: 10px; line-height: 1.15; color: var(--muted); }
+.supp-grid th.day.train { color: var(--accent); }
+.supp-grid th.num, .supp-grid td.num { text-align: right; padding-left: 10px; }
+.supp-grid td.name { min-width: 190px; padding-right: 8px; }
+.supp-grid td.name small { display: block; font-size: 12px; color: var(--ink-2); }
+.sc { display: block; width: 22px; height: 26px; border-radius: 4px; border: 0; padding: 0; background: var(--field); box-shadow: inset 0 0 0 1px var(--grid); }
+button.sc { cursor: pointer; }
+button.sc:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.sc:disabled { cursor: default; outline: none; }
+.sc.ok { background: var(--good); box-shadow: none; }
+.sc.miss { background: var(--muted); box-shadow: none; }
+.sc.now { box-shadow: inset 0 0 0 2px var(--ink-2); }
+.sc.ok.now, .sc.miss.now { box-shadow: 0 0 0 2px var(--ink-2); }
+.supp-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-top: 10px; }
+.supp-legend i { display: inline-block; width: 10px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: -2px; background: var(--field); box-shadow: inset 0 0 0 1px var(--grid); }
+.supp-legend i.ok { background: var(--good); box-shadow: none; }
+.supp-legend i.miss { background: var(--muted); box-shadow: none; }
+.pause-tag { margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); border-radius: 99px; padding: 2px 8px; white-space: nowrap; }
+.supp-soon { border-style: dashed; }
+.card.err { color: var(--bad); }
+.supp-form { display: grid; gap: 14px; }
+.supp-form .field { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.supp-form .field input, .supp-form .field select { width: 100%; min-height: 38px; font-size: 15px; }
+.supp-form .seg { display: flex; flex-wrap: wrap; width: fit-content; max-width: 100%; }
+.supp-f3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
+.supp-sw { border-top: 1px solid var(--grid); }
+.supp-sw .row { padding: 10px 0; border-bottom: 1px solid var(--grid); flex-wrap: nowrap; }
+.supp-sw small { display: block; font-size: 12px; color: var(--ink-2); }
+.supp-sw input[type=checkbox] { width: 20px; height: 20px; }
+.supp-form .err:empty { display: none; }
+.supp-form .err { color: var(--bad); margin: 0; }
+.grow { flex: 1; min-width: 0; }
+@media (max-width: 600px) { .supp-f3 { grid-template-columns: 1fr 1fr; } .supp-f3 .field:first-child { grid-column: 1 / -1; } }

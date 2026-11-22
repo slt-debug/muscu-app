@@ -89,6 +89,22 @@ function validReminder(r) {
   return r.notifyHour === null || (Number.isInteger(r.notifyHour) && r.notifyHour >= 6 && r.notifyHour <= 21);
 }
 
+// Compléments alimentaires (supplements.json, dashboard du 22/11/2026) : même forme que l'iPhone (reminder.js). Contrôle de forme
+// seulement ; le contenu est fusionné avec le fichier par suppMerge (le plus récent gagne, fiche par fiche et prise par prise).
+function validSupp(x) {
+  if (!x || typeof x !== 'object' || typeof x.items !== 'object' || Array.isArray(x.items) || typeof x.log !== 'object' || Array.isArray(x.log)) return false;
+  for (const [id, it] of Object.entries(x.items)) {
+    if (!it || it.id !== id || typeof it.name !== 'string' || !(it.u === undefined || typeof it.u === 'number')) return false;
+    if (!SUPP_MOMENTS.some(m => m[0] === it.moment) || !SUPP_DAYS.some(d => d[0] === it.days)) return false;
+    if (!(it.remind === null || it.remind === undefined || (Number.isInteger(it.remind) && it.remind >= 0 && it.remind <= 23))) return false;
+  }
+  for (const [d, day] of Object.entries(x.log)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !day || typeof day !== 'object') return false;
+    if (!Object.values(day).every(v => v && typeof v.on === 'boolean' && (v.u === undefined || typeof v.u === 'number'))) return false;
+  }
+  return true;
+}
+
 // ---------- Les demandes de la page ----------
 async function readRemote() {
   const { data } = await readJson('data.json', null);
@@ -111,7 +127,12 @@ async function localApi(path, opt = {}) {
     if (path === '/api/reminders') return (await readJson('reminders.json', {})).data || {};
     if (path === '/api/goals') return (await readJson('goals.json', {})).data || {};
     if (path === '/api/withings') return (await readJson('withings.json', {})).data || {};
+    if (path === '/api/supplements') return (await readJson('supplements.json', null)).data || { items: {}, log: {} };
   } else {
+    if (path === '/api/supplements') {
+      if (!validSupp(body)) throw new Error('compléments invalides');
+      return updateJson('supplements.json', null, d => suppMerge(d, body), 'complements dashboard');
+    }
     if (path === '/api/save') { if (!validIncoming(body)) throw new Error('données invalides'); return saveData(body); }
     if (path === '/api/programs') {
       if (!validPrograms(body)) throw new Error('programme invalide');
