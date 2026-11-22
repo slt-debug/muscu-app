@@ -650,7 +650,13 @@ body.salle .salle-plus { display: block; margin-top: 6px; padding: 8px 2px 0 18p
 .supp-item { display: flex; align-items: center; gap: 10px; padding: 11px 14px; color: var(--ink); text-decoration: none; }
 .supp-item + .supp-item { border-top: 1px solid var(--grid); }
 .supp-item b { display: block; font-size: 16px; }
-.supp-item .chev { color: var(--muted); font-size: 22px; }
+.supp-item { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 10px; padding-right: 10px; }
+.supp-item .supp-bars { grid-column: 1 / -1; }
+.supp-item .pause-tag { white-space: nowrap; }
+.supp-item .grow { min-width: 0; }
+.supp-item .supp-meta { display: block; font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+.supp-edit { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border-radius: 99px; border: 1px solid var(--grid); background: var(--field); color: var(--accent); font-size: 14px; font-weight: 700; text-decoration: none; }
+.supp-edit svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .pause-tag { margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--warn-ink); background: var(--warn-bg); border-radius: 99px; padding: 2px 8px; vertical-align: 2px; }
 .supp-bars { display: flex; align-items: center; gap: 2px; margin-top: 5px; }
 .supp-bars i, .supp-legend i { flex: none; width: 6px; height: 12px; border-radius: 2px; background: var(--field); box-shadow: inset 0 0 0 1px var(--grid); }
