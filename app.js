@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '84 (compléments : bouton Modifier sur chaque tuile)';
+const APP_VERSION = '85 (compléments : tuiles compactes, crayon à droite du nom)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -2282,14 +2282,11 @@ function viewNutrition() {
   };
   const line = it => {
     const days = suppDays(it), ok = days.filter(x => x === 'ok').length, miss = days.filter(x => x === 'miss').length;
-    // v84 : bouton « Modifier » visible sur chaque tuile (la tuile elle-même n'est plus un lien).
-    const mom = (SUPP_MOMENTS.find(m => m[0] === it.moment) || [])[1];
+    // v85 : tuile compacte, crayon seul à droite du nom (la tuile elle-même n'est pas un lien).
     return h('div', { class: 'supp-item' },
-      h('span', { class: 'grow' },
-        h('b', {}, it.name, suppPaused(it, d) ? h('span', { class: 'pause-tag' }, 'En pause') : null),
-        h('small', { class: 'supp-meta' }, [suppDoseTxt(it), mom ? mom.toLowerCase() : ''].filter(Boolean).join(' · '))),
+      h('b', { class: 'grow' }, it.name, suppPaused(it, d) ? h('span', { class: 'pause-tag' }, 'En pause') : null),
       h('a', { class: 'supp-edit', href: `#/corps/nutrition/${encodeURIComponent(it.id)}`, 'aria-label': `Modifier ${it.name}` },
-        s('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' }, s('path', { d: 'M4 20h4L19 9l-4-4L4 16v4z M13.5 6.5l4 4' })), 'Modifier'),
+        s('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' }, s('path', { d: 'M4 20h4L19 9l-4-4L4 16v4z M13.5 6.5l4 4' }))),
       h('span', { class: 'supp-bars', role: 'img', 'aria-label': ok + miss ? `${ok} prises sur ${ok + miss} prévues en 30 jours` : 'aucune prise prévue en 30 jours' },
         days.map(x => h('i', { class: x })), h('small', {}, ok + miss ? `${Math.round(100 * ok / (ok + miss))} %` : '–')));
   };
