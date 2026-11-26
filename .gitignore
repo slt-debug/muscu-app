@@ -3,6 +3,9 @@ data.json
 programs.json
 withings.json
 activity.json
+sleep.json
+withings_*.json
+__pycache__/
 reminders.json
 goals.json
 notify-state.json

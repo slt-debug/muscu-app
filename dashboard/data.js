@@ -78,6 +78,7 @@ function validGoals(g) {
   if ('sources' in g) {
     const s = g.sources;
     if (!s || typeof s !== 'object' || !['withings', 'manuel'].includes(s.poids) || !['withings', 'manuel', 'off'].includes(s.pas)) return false;
+    if ('sommeil' in s && !['withings', 'off'].includes(s.sommeil)) return false; // v86 : réglé sur l'iPhone
   }
   return Object.keys(g).every(k => ['poids', 'pas', 'depart', 'sources'].includes(k));
 }

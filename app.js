@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '85 (compléments : tuiles compactes, crayon à droite du nom)';
+const APP_VERSION = '86 (Withings : import des nuits et de leur déroulé dans sleep.json)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -1846,12 +1846,62 @@ async function wFetchSteps(token) {
   }
   return days;
 }
+// Nuits depuis W_SINCE (résumé par nuit : durées des phases en secondes, fréquences, appareil source).
+// Clé : la date du réveil. Même autorisation que les pas (user.activity).
+const SLEEP_FIELDS = 'total_sleep_time,total_timeinbed,deepsleepduration,lightsleepduration,remsleepduration,wakeupduration,wakeupcount,durationtosleep,durationtowakeup,sleep_score,hr_average,hr_min,rr_average,breathing_disturbances_intensity';
+async function wFetchSleep(token) {
+  const nights = {};
+  let offset = 0;
+  for (let page = 0; page < 50; page++) {
+    const b = await wpost('/v2/sleep', {
+      action: 'getsummary', startdateymd: W_SINCE, enddateymd: today(), data_fields: SLEEP_FIELDS, access_token: token,
+      ...(offset ? { offset: String(offset) } : {}),
+    });
+    for (const n of b.series || []) {
+      const d = n.date || (n.enddate ? ymd(new Date(n.enddate * 1000)) : null);
+      if (!d || d < W_SINCE) continue;
+      const x = n.data || {};
+      const prev = nights[d];
+      // Deux nuits le même jour (sieste, appareil en double) : on garde la plus longue.
+      if (prev && (prev.total || 0) >= (x.total_sleep_time || 0)) continue;
+      nights[d] = {
+        start: n.startdate ? n.startdate * 1000 : null, end: n.enddate ? n.enddate * 1000 : null,
+        total: x.total_sleep_time ?? null, inbed: x.total_timeinbed ?? null,
+        deep: x.deepsleepduration ?? null, light: x.lightsleepduration ?? null, rem: x.remsleepduration ?? null, awake: x.wakeupduration ?? null,
+        wakeups: x.wakeupcount ?? null, latency: x.durationtosleep ?? null, outLatency: x.durationtowakeup ?? null,
+        score: x.sleep_score ?? null, hr: x.hr_average ?? null, hrMin: x.hr_min ?? null, rr: x.rr_average ?? null,
+        model: n.model ?? null, modelId: n.model_id ?? null, modified: n.modified ?? null,
+      };
+    }
+    if (!b.more) break;
+    offset = b.offset;
+  }
+  return nights;
+}
+// Déroulé d'une nuit (hypnogramme) : états minute par minute, regroupés en blocs.
+// hyp = { t0 (ms), s: [[début en min depuis t0, durée en min, état]] } ; état 0 éveillé, 1 léger, 2 profond, 3 paradoxal.
+// Withings limite chaque demande à moins de 24 h : une demande par nuit.
+async function wFetchHypno(token, night) {
+  if (!night.start || !night.end) return null;
+  const from = Math.floor(night.start / 1000) - 600, to = Math.min(Math.floor(night.end / 1000) + 600, from + 86000);
+  const b = await wpost('/v2/sleep', { action: 'get', startdate: String(from), enddate: String(to), access_token: token });
+  const blocks = [];
+  for (const x of (b.series || []).filter(x => x.startdate && x.enddate && x.state != null).sort((a, z) => a.startdate - z.startdate)) {
+    const st = Math.round((x.startdate * 1000 - night.start) / 60e3), dur = Math.round((x.enddate - x.startdate) / 60);
+    const last = blocks[blocks.length - 1];
+    if (last && last[2] === x.state && Math.abs(last[0] + last[1] - st) <= 1) last[1] += dur;
+    else if (dur > 0) blocks.push([st, dur, x.state]);
+  }
+  return { t0: night.start, s: blocks };
+}
+const HYP_PER_SYNC = 7; // nuits sans déroulé complétées à chaque synchro (les plus récentes d'abord)
 // Étape Withings de la synchro. force : « Importer maintenant » (ignore le réglage automatique et le délai) ;
 // manual : appui sur la pastille de synchro (ignore seulement le délai). Renvoie null s'il n'y a rien à faire.
 async function withingsFetch(force, manual) {
   if (!wConnected()) return null;
   const wPoids = srcOf('poids') === 'withings', wPas = srcOf('pas') === 'withings';
-  if (!wPoids && !wPas) return null; // Données suivies : rien ne vient de Withings
+  const wSleep = hasStepsScope() && srcOf('sommeil') === 'withings';
+  if (!wPoids && !wPas && !wSleep) return null; // Données suivies : rien ne vient de Withings
   if (!force && wstate?.auto === false) return null;
   if (!force && !manual && Date.now() - (wauth.lastTry || 0) < W_EVERY) return null;
   wauth.lastTry = Date.now(); store(WAUTH, wauth);
@@ -1862,7 +1912,18 @@ async function withingsFetch(force, manual) {
     let steps = null, stepsError = null;
     // Pas : un échec ne fait pas échouer l'import des pesées.
     if (wPas && hasStepsScope()) { try { steps = await wFetchSteps(token); } catch (e) { stepsError = String(e.message || e); } }
-    return { days, steps, stepsError, count: 0, stepDays: 0 };
+    // Nuits : même principe, un échec n'empêche ni les pesées ni les pas.
+    let sleep = null, sleepError = null;
+    if (wSleep) { try { sleep = await wFetchSleep(token); } catch (e) { sleepError = String(e.message || e); slog(`Nuits Withings : ${sleepError}`); } }
+    // Déroulé des nuits qui n'en ont pas encore (hyp vide = demandé, rien reçu : pas redemandé).
+    if (sleep) {
+      const todo = Object.keys(sleep).sort().reverse().filter(d => sleepData?.nights?.[d]?.hyp === undefined).slice(0, HYP_PER_SYNC);
+      for (const d of todo) {
+        try { sleep[d].hyp = await wFetchHypno(token, sleep[d]) || { t0: sleep[d].start, s: [] }; }
+        catch (e) { sleepError = `déroulé : ${e.message || e}`; slog(`Déroulé de la nuit du ${d} : ${e.message || e}`); break; }
+      }
+    }
+    return { days, steps, stepsError, sleep, sleepError, count: 0, stepDays: 0, sleepNights: 0 };
   } catch (e) { const error = String(e.message || e); slog(error); return { error }; }
   finally { sync.phase = ''; refreshChips(); }
 }
@@ -1877,22 +1938,39 @@ async function withingsSave(wi) {
     }, 'withings pas');
     if (next) { activity = next; store(AKEY, activity); }
   }
+  if (wi.sleep) {
+    // sleep.json : nuits importées (nights) ; les notes du matin (notes) y seront rangées à part, jamais écrasées par l'import.
+    const next = await updateRepoJson('sleep.json', d => {
+      const old = d.nights || {};
+      // Le déroulé déjà reçu est conservé quand le résumé de la nuit est réimporté sans lui.
+      for (const k of Object.keys(wi.sleep)) if (wi.sleep[k].hyp === undefined && old[k]?.hyp !== undefined) wi.sleep[k].hyp = old[k].hyp;
+      const changed = Object.keys(wi.sleep).filter(k => JSON.stringify(old[k]) !== JSON.stringify(wi.sleep[k]));
+      wi.sleepNights = changed.length;
+      return changed.length ? { ...d, nights: { ...old, ...wi.sleep }, since: W_SINCE, src: 'withings', updatedAt: now } : null;
+    }, 'withings nuits');
+    if (next) { sleepData = next; store(SLKEY, sleepData); }
+  }
   if (wi.error) wauth.lastError = wi.error;
   else Object.assign(wauth, { lastImport: now, lastCount: wi.count, lastStepDays: wi.stepDays, lastError: null, lastStepsError: wi.stepsError });
   store(WAUTH, wauth);
-  wMsg = wi.error ? `Échec : ${wi.error}` : `Import terminé : ${importTxt(wi.count, wi.stepDays)}.`;
+  if (!wi.error) Object.assign(wauth, { lastSleepNights: wi.sleepNights, lastSleepError: wi.sleepError });
+  store(WAUTH, wauth);
+  wMsg = wi.error ? `Échec : ${wi.error}` : `Import terminé : ${importTxt(wi.count, wi.stepDays, wi.sleepNights)}.`;
   const patch = wi.error ? { lastError: wi.error }
-    : { connected: true, by: 'iphone', steps: hasStepsScope(), lastImport: now, lastCount: wi.count, lastError: null, lastStepsError: wi.stepsError, since: W_SINCE, validUntil: wauth.refreshedAt + W_YEAR };
+    : { connected: true, by: 'iphone', steps: hasStepsScope(), lastImport: now, lastCount: wi.count, lastError: null, lastStepsError: wi.stepsError, lastSleepError: wi.sleepError, since: W_SINCE, validUntil: wauth.refreshedAt + W_YEAR };
   // Écrit quand quelque chose change, sinon au plus une fois par heure (évite un commit à chaque ouverture).
   const next = await updateRepoJson('withings.json', d => {
     const changed = (d.lastError ?? null) !== (patch.lastError ?? null) || (d.lastStepsError ?? null) !== (patch.lastStepsError ?? d.lastStepsError ?? null)
-      || (!wi.error && d.connected !== true) || wi.count > 0 || wi.stepDays > 0 || now - (d.statusAt || 0) > 3600e3;
+      || (d.lastSleepError ?? null) !== (patch.lastSleepError ?? d.lastSleepError ?? null)
+      || (!wi.error && d.connected !== true) || wi.count > 0 || wi.stepDays > 0 || wi.sleepNights > 0 || now - (d.statusAt || 0) > 3600e3;
     return changed ? { ...d, ...patch, statusAt: now } : null;
   }, 'withings');
   if (next) { wstate = next; store(WKEY, wstate); }
 }
-const importTxt = (count, stepDays) => `${count ? `${plural(count, 'pesée')} importée${count > 1 ? 's' : ''}` : 'aucune nouvelle pesée'}${stepDays ? `, pas sur ${plural(stepDays, 'jour')}` : ''}`;
+const importTxt = (count, stepDays, nights) => `${count ? `${plural(count, 'pesée')} importée${count > 1 ? 's' : ''}` : 'aucune nouvelle pesée'}${stepDays ? `, pas sur ${plural(stepDays, 'jour')}` : ''}${nights ? `, ${plural(nights, 'nuit')}` : ''}`;
 // Pas quotidiens (activity.json), écrits par l'import Withings ci-dessus.
+const SLKEY = 'muscu.sleep';
+let sleepData = load(SLKEY, { nights: {} });
 const AKEY = 'muscu.activity';
 let activity = load(AKEY, { days: {} });
 async function pullActivity() {
@@ -2042,6 +2120,17 @@ function withingsSummary() {
   const l = lastWithings();
   return `Automatique${l ? ` · dernière pesée ${whenTxt(l.withings.at)}` : ''}`;
 }
+// Nuits reçues de Withings : nombre, dernière nuit, appareil source (sert aussi à vérifier ce que Withings renvoie).
+function sleepRow(kv) {
+  const keys = Object.keys(sleepData?.nights || {}).sort();
+  if (!keys.length) return null; // balance seule : rien à signaler
+  const n = sleepData.nights[keys[keys.length - 1]];
+  const hm = sec => sec == null ? '–' : `${Math.floor(sec / 3600)} h ${pad2(Math.round(sec / 60) % 60)}`;
+  const phases = n.deep != null || n.rem != null ? ` (profond ${hm(n.deep)}, paradoxal ${hm(n.rem)})` : ' (sans phases)';
+  const models = [...new Set(keys.map(k => sleepData.nights[k].model).filter(m => m != null))].join(', ');
+  const hyp = n.hyp === undefined ? '' : n.hyp.s.length ? ` · déroulé reçu (${n.hyp.s.length} blocs)` : ' · pas de déroulé';
+  return kv('Nuits', `${plural(keys.length, 'nuit')} · dernière le ${fmtDate(keys[keys.length - 1])} : ${hm(n.total)}${phases}${hyp}${models ? ` · source ${models}` : ''}`);
+}
 function viewWithings() {
   setTab('set');
   const head = [h('div', { class: 'row between' }, h('a', { href: '#/sources' }, '‹ Données suivies'), syncChip()), h('h1', {}, 'Balance Withings')];
@@ -2100,7 +2189,9 @@ function viewWithings() {
         wauth.lastImport ? kv('Dernier import', `${whenTxt(wauth.lastImport)} · ${importTxt(wauth.lastCount || 0, wauth.lastStepDays || 0)}`) : null,
         kv('Depuis le', fmtDate(W_SINCE)),
         wauth.lastError ? kv('Erreur', wauth.lastError) : null,
-        wauth.lastStepsError ? kv('Erreur pas', wauth.lastStepsError) : null)),
+        wauth.lastStepsError ? kv('Erreur pas', wauth.lastStepsError) : null,
+        sleepRow(kv),
+        wauth.lastSleepError ? kv('Erreur nuits', wauth.lastSleepError) : null)),
     note,
     h('button', { class: 'btn', disabled: !cfgOk(), onclick: () => { wMsg = 'Import en cours…'; viewWithings(); syncNow(true, true); } }, 'Importer maintenant'),
     offBtn,
@@ -2374,12 +2465,14 @@ function viewSuppEdit(id) {
 // Origine du poids et des pas, partagée dans goals.json (sources). Sans réglage : tout vient de Withings
 // si la balance est connectée, sinon poids saisi à la main et pas non suivis.
 const SRC_LABEL = { withings: 'Withings', manuel: 'manuel', off: 'non suivis' };
+// Sommeil (v86) : 'withings' ou 'off' ; sans réglage, suivi dès que Withings est connecté.
 function srcOf(k) {
   const v = goals?.sources?.[k];
   if (v) return v;
-  return wConnected() || wstate?.connected ? 'withings' : k === 'pas' ? 'off' : 'manuel';
+  return wConnected() || wstate?.connected ? 'withings' : k === 'poids' ? 'manuel' : 'off';
 }
-const sourcesSummary = () => `Poids : ${SRC_LABEL[srcOf('poids')]} · Pas : ${SRC_LABEL[srcOf('pas')]}`;
+const sourcesSummary = () => `Poids : ${SRC_LABEL[srcOf('poids')]} · Pas : ${SRC_LABEL[srcOf('pas')]}${srcOf('sommeil') === 'withings' ? ' · Sommeil : Withings' : ''}`;
+const sleepNightCount = () => Object.keys(sleepData?.nights || {}).length;
 function viewSources() {
   setTab('set');
   const msg = h('p', { class: 'sub', role: 'status' });
@@ -2387,14 +2480,19 @@ function viewSources() {
     if (!cfgOk()) { msg.textContent = 'Configure d\'abord la synchronisation GitHub.'; return; }
     msg.textContent = 'Enregistrement…';
     try {
-      await saveGoals({ sources: { poids: srcOf('poids'), pas: srcOf('pas'), [k]: v } });
+      await saveGoals({ sources: { poids: srcOf('poids'), pas: srcOf('pas'), sommeil: srcOf('sommeil'), [k]: v } });
       viewSources();
       if (v === 'withings' && wConnected()) syncNow(false, true); // premier import de la donnée choisie
     } catch (e) { msg.textContent = `Échec : ${e.message}`; }
   };
   const pills = (k, opts) => h('div', { class: `pills src p${opts.length}` },
     opts.map(([v, t]) => h('button', { type: 'button', class: srcOf(k) === v ? 'on' : '', onclick: () => srcOf(k) !== v && apply(k, v) }, t)));
-  const needW = srcOf('poids') === 'withings' || srcOf('pas') === 'withings';
+  const needW = srcOf('poids') === 'withings' || srcOf('pas') === 'withings' || srcOf('sommeil') === 'withings';
+  const nN = sleepNightCount(), lastN = Object.keys(sleepData?.nights || {}).sort().pop();
+  const sleepSub = !(wConnected() || wstate?.connected) ? 'Les nuits viennent de Withings : connecte d\'abord ton compte dans Balance Withings.'
+    : srcOf('sommeil') === 'off' ? `Les nuits ne sont pas importées et la rubrique Sommeil est masquée.${nN ? ' Les nuits déjà reçues sont gardées.' : ''}`
+    : nN ? `${plural(nN, 'nuit')} reçue${nN > 1 ? 's' : ''}, la dernière le ${fmtDate(lastN)} · importées de Withings à chaque ouverture de l'appli.`
+    : 'Aucune nuit reçue pour l\'instant. Il faut un appareil qui enregistre le sommeil dans Withings : montre ou capteur Withings, ou Apple Watch partagée avec l\'appli Withings.';
   mount(
     h('a', { class: 'back', href: '#/reglages' }, '‹ Réglages'),
     h('h1', {}, 'Données suivies'),
@@ -2410,6 +2508,9 @@ function viewSources() {
         manuel: 'Tu saisis les pas de la veille dans la carte Pas de la page Séance.',
         off: 'Les cartes de pas disparaissent et l\'objectif de pas n\'est plus demandé.',
       }[srcOf('pas')])),
+    h('div', { class: 'card' }, h('b', {}, 'Sommeil'),
+      pills('sommeil', [['withings', '⚖ Withings'], ['off', 'Non suivi']]),
+      h('div', { class: 'sub' }, sleepSub)),
     msg,
     h('div', { class: 'navlist' }, navRow('#/withings', scaleIcon(), 'scale', 'Balance Withings',
       needW ? withingsSummary() : `${withingsSummary()} · inutile avec ces choix`)));

@@ -450,7 +450,8 @@ async function saveGoals(patch, redraw) {
   catch (e) { editMsg = `Échec : ${e.message}`; }
   redraw();
 }
-const setSource = (k, v) => saveGoals({ sources: { poids: srcOf('poids'), pas: srcOf('pas'), [k]: v } }, viewGoals);
+// Garde les autres réglages du fichier (sommeil, choisi sur l'iPhone).
+const setSource = (k, v) => saveGoals({ sources: { ...(goals?.sources || {}), poids: srcOf('poids'), pas: srcOf('pas'), [k]: v } }, viewGoals);
 function weightEditForm() {
   const iP = h('input', { class: 'n', inputmode: 'decimal', value: goals?.poids != null ? fmtKg(goals.poids) : '', placeholder: 'ex. 85' });
   const firstBody = liveBody()[0]?.date;
