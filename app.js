@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '86 (Withings : import des nuits et de leur déroulé dans sleep.json)';
+const APP_VERSION = '87 (Withings : ce que renvoie l\'import des nuits est noté, même vide)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -1849,15 +1849,21 @@ async function wFetchSteps(token) {
 // Nuits depuis W_SINCE (résumé par nuit : durées des phases en secondes, fréquences, appareil source).
 // Clé : la date du réveil. Même autorisation que les pas (user.activity).
 const SLEEP_FIELDS = 'total_sleep_time,total_timeinbed,deepsleepduration,lightsleepduration,remsleepduration,wakeupduration,wakeupcount,durationtosleep,durationtowakeup,sleep_score,hr_average,hr_min,rr_average,breathing_disturbances_intensity';
+// sleepSeen : ce que Withings a renvoyé au dernier appel (nombre de nuits brutes, appareils), gardé même à zéro
+// dans withings.json pour savoir si l'import a eu lieu.
+let sleepSeen = null;
 async function wFetchSleep(token) {
   const nights = {};
   let offset = 0;
+  sleepSeen = { count: 0, models: [] };
   for (let page = 0; page < 50; page++) {
     const b = await wpost('/v2/sleep', {
       action: 'getsummary', startdateymd: W_SINCE, enddateymd: today(), data_fields: SLEEP_FIELDS, access_token: token,
       ...(offset ? { offset: String(offset) } : {}),
     });
     for (const n of b.series || []) {
+      sleepSeen.count++;
+      if (n.model != null && !sleepSeen.models.includes(String(n.model))) sleepSeen.models.push(String(n.model));
       const d = n.date || (n.enddate ? ymd(new Date(n.enddate * 1000)) : null);
       if (!d || d < W_SINCE) continue;
       const x = n.data || {};
@@ -1923,7 +1929,7 @@ async function withingsFetch(force, manual) {
         catch (e) { sleepError = `déroulé : ${e.message || e}`; slog(`Déroulé de la nuit du ${d} : ${e.message || e}`); break; }
       }
     }
-    return { days, steps, stepsError, sleep, sleepError, count: 0, stepDays: 0, sleepNights: 0 };
+    return { days, steps, stepsError, sleep, sleepError, sleepSeen: wSleep ? sleepSeen : null, count: 0, stepDays: 0, sleepNights: 0 };
   } catch (e) { const error = String(e.message || e); slog(error); return { error }; }
   finally { sync.phase = ''; refreshChips(); }
 }
@@ -1957,11 +1963,13 @@ async function withingsSave(wi) {
   store(WAUTH, wauth);
   wMsg = wi.error ? `Échec : ${wi.error}` : `Import terminé : ${importTxt(wi.count, wi.stepDays, wi.sleepNights)}.`;
   const patch = wi.error ? { lastError: wi.error }
-    : { connected: true, by: 'iphone', steps: hasStepsScope(), lastImport: now, lastCount: wi.count, lastError: null, lastStepsError: wi.stepsError, lastSleepError: wi.sleepError, since: W_SINCE, validUntil: wauth.refreshedAt + W_YEAR };
+    : { connected: true, by: 'iphone', steps: hasStepsScope(), lastImport: now, lastCount: wi.count, lastError: null, lastStepsError: wi.stepsError, lastSleepError: wi.sleepError, since: W_SINCE, validUntil: wauth.refreshedAt + W_YEAR,
+      ...(wi.sleepSeen ? { sleepSeen: { ...wi.sleepSeen, at: now } } : {}) };
   // Écrit quand quelque chose change, sinon au plus une fois par heure (évite un commit à chaque ouverture).
   const next = await updateRepoJson('withings.json', d => {
     const changed = (d.lastError ?? null) !== (patch.lastError ?? null) || (d.lastStepsError ?? null) !== (patch.lastStepsError ?? d.lastStepsError ?? null)
       || (d.lastSleepError ?? null) !== (patch.lastSleepError ?? d.lastSleepError ?? null)
+      || (wi.sleepSeen && (d.sleepSeen?.count !== wi.sleepSeen.count || String(d.sleepSeen?.models) !== String(wi.sleepSeen.models)))
       || (!wi.error && d.connected !== true) || wi.count > 0 || wi.stepDays > 0 || wi.sleepNights > 0 || now - (d.statusAt || 0) > 3600e3;
     return changed ? { ...d, ...patch, statusAt: now } : null;
   }, 'withings');
