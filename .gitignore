@@ -5,6 +5,7 @@ withings.json
 activity.json
 sleep.json
 withings_*.json
+withings_*.py
 __pycache__/
 reminders.json
 goals.json

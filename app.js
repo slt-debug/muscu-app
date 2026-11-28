@@ -2,7 +2,7 @@
 /* Muscu : suivi de séances. Données en local (localStorage), synchronisées via un dépôt GitHub privé. */
 
 // ---------- Utilitaires ----------
-const APP_VERSION = '87 (Withings : ce que renvoie l\'import des nuits est noté, même vide)';
+const APP_VERSION = '88 (Sommeil : nuits d\'Apple Santé par le raccourci iOS « Nuits Muscu »)';
 // Quelques consignes diffèrent sur Android (installation, appli de pas).
 const ANDROID = /Android/i.test(navigator.userAgent);
 const app = document.getElementById('app');
@@ -1635,6 +1635,7 @@ async function syncNow(manual, forceWithings) {
     if (await pullReminder()) localChanged = true;
     if (await pullGoals()) localChanged = true;
     if (await pullSupp()) localChanged = true;
+    if (await pullSleepInbox(isManual || forceWithings === true)) localChanged = true;
     if (!wi?.stepDays && await pullActivity()) localChanged = true;
     sync.state = 'ok'; const d = new Date(); sync.at = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; sync.msg = '';
     const nS = Object.values(db.sessions).filter(r => !r.deleted).length, nB = Object.values(db.body).filter(b => !b.deleted).length;
@@ -1655,6 +1656,7 @@ async function syncNow(manual, forceWithings) {
     || location.hash === '#/objectifs' || location.hash === '#/corps/nutrition' || location.hash.startsWith('#/ex/');
   if (localChanged && readOnlyView) render();
   if (location.hash === '#/withings' && wConnected()) render(); // résultat de l'import
+  if (location.hash === '#/sources' && srcOf('sommeil') === 'sante') render(); // état des nuits du raccourci
 }
 
 // ---------- Réglages, export / import ----------
@@ -1979,6 +1981,66 @@ const importTxt = (count, stepDays, nights) => `${count ? `${plural(count, 'pes�
 // Pas quotidiens (activity.json), écrits par l'import Withings ci-dessus.
 const SLKEY = 'muscu.sleep';
 let sleepData = load(SLKEY, { nights: {} });
+// Nuits du raccourci iOS « Nuits Muscu » (v88, source « sante ») : fichiers sleep/inbox/*.csv de muscu-data (sleep.js).
+// Chaque fichier couvre les 8 derniers jours : la nuit la plus ancienne peut être coupée, on garde les 7 suivantes.
+// Une nuit déjà reçue n'est remplacée que par une version au moins aussi longue. Les fichiers des jours passés sont
+// supprimés une fois rangés ; celui du jour reste, il dit au raccourci qu'il a déjà envoyé ce matin.
+// sleep.json garde inbox = { at: dernier passage qui a trouvé des fichiers, file: dernier fichier, bad, unknown }.
+let inboxTry = 0;
+async function pullSleepInbox(manual) {
+  if (srcOf('sommeil') !== 'sante') return false;
+  if (!manual && Date.now() - inboxTry < W_EVERY) return false;
+  inboxTry = Date.now();
+  const base = ghUrl().replace(/[^/]+$/, 'sleep/inbox');
+  try {
+    const r = await ghFetch(base, { headers: ghHeaders(), cache: 'no-store' });
+    if (r.status === 404) return false; // rien encore déposé
+    if (!r.ok) throw new Error(`GitHub ${r.status}`);
+    const files = (await r.json()).filter(f => f.type === 'file' && /^\d{4}-\d{2}-\d{2}.*\.csv$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name));
+    if (!files.length) return false;
+    const nights = {}, unknown = [];
+    let bad = 0;
+    for (const f of files) {
+      const t = await ghFetch(`${base}/${encodeURIComponent(f.name)}`, { headers: { ...ghHeaders(), Accept: 'application/vnd.github.raw+json' }, cache: 'no-store' });
+      if (!t.ok) throw new Error(`GitHub ${t.status} (${f.name})`);
+      const p = parseSleepCsv(await t.text());
+      bad += p.bad; for (const u of p.unknown) if (!unknown.includes(u)) unknown.push(u);
+      const d0 = parseYmd(f.name.slice(0, 10)); d0.setDate(d0.getDate() - 7);
+      const got = sleepNights(p.samples, ymd(d0));
+      for (const [d, n] of Object.entries(got)) if (!nights[d] || nights[d].total <= n.total) nights[d] = n;
+    }
+    const now = Date.now(), last = files[files.length - 1].name;
+    let added = 0;
+    const next = await updateRepoJson('sleep.json', d => {
+      const old = d.nights || {}, out = { ...old };
+      for (const [k, n] of Object.entries(nights)) {
+        const o = old[k];
+        if (o && o.src === 'sante' && (o.total || 0) > n.total) continue;
+        const { recvAt, ...oo } = o || {};
+        if (o && JSON.stringify(oo) === JSON.stringify(n)) continue;
+        out[k] = { ...n, recvAt: now }; added++;
+      }
+      const inbox = { at: now, file: last, bad, unknown };
+      const same = d.inbox && d.inbox.file === last && d.inbox.bad === bad && String(d.inbox.unknown) === String(unknown);
+      if (!added && same) return null;
+      return { ...d, nights: out, inbox, src: 'sante', updatedAt: now };
+    }, 'raccourci nuits');
+    if (next) { sleepData = next; store(SLKEY, sleepData); }
+    slog(`Raccourci : ${files.length} fichier${files.length > 1 ? 's' : ''}, ${plural(added, 'nuit')} rangée${added > 1 ? 's' : ''}`);
+    // Ménage : les fichiers des jours passés sont rangés dans sleep.json.
+    for (const f of files.filter(f => f.name.slice(0, 10) < today())) {
+      try {
+        await ghFetch(`${base}/${encodeURIComponent(f.name)}`, { method: 'DELETE', headers: ghHeaders(), body: JSON.stringify({ message: `raccourci nuits : ${f.name} rangé`, sha: f.sha }) });
+      } catch (e) { slog(`${f.name} non supprimé : ${e.message}`); }
+    }
+    if (sleepData.inboxError) { delete sleepData.inboxError; store(SLKEY, sleepData); }
+    return !!next;
+  } catch (e) {
+    slog(`Nuits du raccourci non lues : ${e.message}`);
+    sleepData = { ...sleepData, inboxError: String(e.message || e) }; store(SLKEY, sleepData);
+    return false;
+  }
+}
 const AKEY = 'muscu.activity';
 let activity = load(AKEY, { days: {} });
 async function pullActivity() {
@@ -2473,13 +2535,49 @@ function viewSuppEdit(id) {
 // Origine du poids et des pas, partagée dans goals.json (sources). Sans réglage : tout vient de Withings
 // si la balance est connectée, sinon poids saisi à la main et pas non suivis.
 const SRC_LABEL = { withings: 'Withings', manuel: 'manuel', off: 'non suivis' };
-// Sommeil (v86) : 'withings' ou 'off' ; sans réglage, suivi dès que Withings est connecté.
+// Sommeil (v86) : 'withings', 'sante' (raccourci iOS, v88) ou 'off' ; sans réglage, suivi dès que Withings est connecté.
 function srcOf(k) {
   const v = goals?.sources?.[k];
   if (v) return v;
   return wConnected() || wstate?.connected ? 'withings' : k === 'poids' ? 'manuel' : 'off';
 }
-const sourcesSummary = () => `Poids : ${SRC_LABEL[srcOf('poids')]} · Pas : ${SRC_LABEL[srcOf('pas')]}${srcOf('sommeil') === 'withings' ? ' · Sommeil : Withings' : ''}`;
+const sourcesSummary = () => `Poids : ${SRC_LABEL[srcOf('poids')]} · Pas : ${SRC_LABEL[srcOf('pas')]}${{ withings: ' · Sommeil : Withings', sante: ' · Sommeil : Raccourci' }[srcOf('sommeil')] || ''}`;
+const SHORTCUT_NAME = 'Nuits Muscu';
+const SHORTCUT_RUN = `shortcuts://run-shortcut?name=${encodeURIComponent(SHORTCUT_NAME)}`;
+// Carte Sommeil en source Raccourci : mise en place (3 étapes, cochées dès la première nuit reçue) et état.
+function shortcutCards() {
+  const keys = Object.keys(sleepData?.nights || {}).filter(k => sleepData.nights[k].src === 'sante').sort();
+  const ok = keys.length > 0, inbox = sleepData?.inbox;
+  const steps = [
+    ['Créer un jeton pour le raccourci', `Sur GitHub, un jeton limité au dépôt ${cfg.repo || 'muscu-data'}, droit Contents en lecture et écriture. Distinct de celui de l'appli : il se révoque seul.`, h('a', { href: 'https://github.com/settings/personal-access-tokens/new', target: '_blank', rel: 'noopener' }, 'Ouvrir GitHub › Jetons ›')],
+    [`Installer le raccourci « ${SHORTCUT_NAME} »`, 'Le guide montre chaque action à ajouter dans l\'app Raccourcis. Le jeton se colle dans la première.', h('a', { href: '#/sources/raccourci' }, 'Voir le guide pas à pas ›')],
+    ['Le lancer chaque matin', 'Automatisation « Quand j\'ouvre Météo » (ou une autre appli du matin), exécution immédiate. Chaque passage renvoie les 7 dernières nuits : un matin oublié se rattrape seul.', h('a', { href: '#/sources/raccourci/auto' }, 'Voir comment créer l\'automatisation ›')],
+  ];
+  const kv = (k, v) => [h('span', { class: 'sub' }, k), h('span', {}, v)];
+  const lastN = keys[keys.length - 1], n = lastN && sleepData.nights[lastN];
+  const prevDay = d => { const x = parseYmd(d); x.setDate(x.getDate() - 1); return x; };
+  const models = [...new Set(keys.map(k => sleepData.nights[k].model).filter(Boolean))].join(', ');
+  return [
+    h('div', { class: 'card sc-setup' },
+      h('div', { class: 'row between' }, h('b', {}, 'Mise en place'), h('span', { class: 'sub' }, 'une seule fois')),
+      steps.map(([t, d, link], i) => h('div', { class: 'sc-step' },
+        h('span', { class: `sc-dot${ok ? ' done' : ''}`, 'aria-hidden': 'true' }, ok ? '✓' : String(i + 1)),
+        h('span', {}, h('b', {}, t), h('small', {}, d), link)))),
+    h('div', { class: 'card' }, h('b', {}, 'État'),
+      ok ? h('div', { class: 'kvg' },
+        kv('Dernière nuit', `nuit du ${prevDay(lastN).getDate()} au ${fmtDate(lastN)}${n.recvAt ? ` · reçue le ${fmtDate(ymd(new Date(n.recvAt)))} à ${fmtHour(n.recvAt)}` : ''}`),
+        kv('Nuits reçues', `${keys.length} depuis le ${fmtDate(keys[0])}`),
+        models ? kv('Source', `${models} (via Santé)`) : null,
+        inbox?.unknown?.length ? kv('À signaler', `valeurs inconnues : ${inbox.unknown.join(', ')}`) : null,
+        inbox?.bad ? kv('À signaler', `${plural(inbox.bad, 'ligne')} illisible${inbox.bad > 1 ? 's' : ''} dans ${inbox.file}`) : null,
+        sleepData.inboxError ? kv('Erreur', sleepData.inboxError) : null)
+        : h('div', { class: 'sub' }, sleepData?.inboxError ? `Erreur de lecture : ${sleepData.inboxError}`
+          : inbox?.unknown?.length ? `Fichier reçu, mais aucune nuit reconnue (valeurs inconnues : ${inbox.unknown.join(', ')}).`
+          : 'Aucune nuit reçue pour l\'instant. Termine la mise en place, puis lance le raccourci une première fois.'),
+      h('a', { class: 'btn secondary', href: SHORTCUT_RUN }, 'Importer mes nuits maintenant'),
+      h('div', { class: 'sub' }, `Ouvre le raccourci « ${SHORTCUT_NAME} ». Reviens ensuite dans l'appli : la nuit apparaît à la synchro suivante.`)),
+  ];
+}
 const sleepNightCount = () => Object.keys(sleepData?.nights || {}).length;
 function viewSources() {
   setTab('set');
@@ -2491,16 +2589,18 @@ function viewSources() {
       await saveGoals({ sources: { poids: srcOf('poids'), pas: srcOf('pas'), sommeil: srcOf('sommeil'), [k]: v } });
       viewSources();
       if (v === 'withings' && wConnected()) syncNow(false, true); // premier import de la donnée choisie
+      if (v === 'sante') syncNow(true); // nuits déjà déposées par le raccourci
     } catch (e) { msg.textContent = `Échec : ${e.message}`; }
   };
   const pills = (k, opts) => h('div', { class: `pills src p${opts.length}` },
     opts.map(([v, t]) => h('button', { type: 'button', class: srcOf(k) === v ? 'on' : '', onclick: () => srcOf(k) !== v && apply(k, v) }, t)));
   const needW = srcOf('poids') === 'withings' || srcOf('pas') === 'withings' || srcOf('sommeil') === 'withings';
   const nN = sleepNightCount(), lastN = Object.keys(sleepData?.nights || {}).sort().pop();
-  const sleepSub = !(wConnected() || wstate?.connected) ? 'Les nuits viennent de Withings : connecte d\'abord ton compte dans Balance Withings.'
+  const sleepSub = srcOf('sommeil') === 'sante' ? 'Un raccourci iOS lit tes nuits dans Apple Santé (Apple Watch ou autre) et les dépose dans ton dépôt privé. Phases et déroulé compris.'
+    : srcOf('sommeil') === 'withings' && !(wConnected() || wstate?.connected) ? 'Les nuits viennent de Withings : connecte d\'abord ton compte dans Balance Withings.'
     : srcOf('sommeil') === 'off' ? `Les nuits ne sont pas importées et la rubrique Sommeil est masquée.${nN ? ' Les nuits déjà reçues sont gardées.' : ''}`
     : nN ? `${plural(nN, 'nuit')} reçue${nN > 1 ? 's' : ''}, la dernière le ${fmtDate(lastN)} · importées de Withings à chaque ouverture de l'appli.`
-    : 'Aucune nuit reçue pour l\'instant. Il faut un appareil qui enregistre le sommeil dans Withings : montre ou capteur Withings, ou Apple Watch partagée avec l\'appli Withings.';
+    : 'Aucune nuit reçue de Withings. Ne fonctionne qu\'avec un appareil Withings : les nuits de l\'Apple Watch ne sont pas transmises (choisis alors Raccourci).';
   mount(
     h('a', { class: 'back', href: '#/reglages' }, '‹ Réglages'),
     h('h1', {}, 'Données suivies'),
@@ -2517,11 +2617,78 @@ function viewSources() {
         off: 'Les cartes de pas disparaissent et l\'objectif de pas n\'est plus demandé.',
       }[srcOf('pas')])),
     h('div', { class: 'card' }, h('b', {}, 'Sommeil'),
-      pills('sommeil', [['withings', '⚖ Withings'], ['off', 'Non suivi']]),
+      pills('sommeil', [['withings', '⚖ Withings'], ['sante', '◆ Raccourci'], ['off', 'Non suivi']]),
       h('div', { class: 'sub' }, sleepSub)),
+    srcOf('sommeil') === 'sante' ? shortcutCards() : null,
     msg,
     h('div', { class: 'navlist' }, navRow('#/withings', scaleIcon(), 'scale', 'Balance Withings',
       needW ? withingsSummary() : `${withingsSummary()} · inutile avec ces choix`)));
+}
+// Guide pas à pas du raccourci « Nuits Muscu » (#/sources/raccourci, #/sources/raccourci/auto pour l'automatisation).
+// Les adresses sont celles du dépôt réglé dans la synchro, avec un bouton Copier.
+function viewShortcutGuide(part) {
+  setTab('set');
+  const api = `https://api.github.com/repos/${cfg.owner || 'TON-COMPTE'}/${cfg.repo || 'muscu-data'}/contents/sleep/inbox/`;
+  const copy = text => h('button', { type: 'button', class: 'btn small secondary sc-copy', onclick: async e => {
+    const b = e.currentTarget;
+    try { await navigator.clipboard.writeText(text); b.textContent = 'Copié'; } catch { b.textContent = 'Copie impossible'; }
+    setTimeout(() => { b.textContent = 'Copier'; }, 1500);
+  } }, 'Copier');
+  const code = text => h('div', { class: 'sc-code' }, h('code', {}, text), copy(text));
+  const v = t => h('span', { class: 'sc-var' }, t); // variable magique du raccourci
+  const act = (n, color, title, ...body) => h('div', { class: 'card sc-act' },
+    h('div', { class: 'row' }, h('span', { class: `sc-num ${color}`, 'aria-hidden': 'true' }, String(n)), h('b', {}, title)),
+    h('div', { class: 'sc-body' }, ...body));
+  const p = (...k) => h('p', {}, ...k);
+  const headers = [p('En-têtes (deux) :'), code('Authorization'), p('valeur : Bearer, une espace, puis ', v('Jeton')), code('Accept'), code('application/vnd.github+json')];
+  const autoCard = h('div', { class: 'card sc-act', id: 'sc-auto' },
+    h('b', {}, 'Automatisation, onglet Automatisation de Raccourcis'),
+    h('div', { class: 'sc-body' },
+      p('+ › App › choisis ', h('b', {}, 'Météo'), ' (ou une autre appli ouverte chaque matin : Mail, Horloge…) › coche ', h('b', {}, 'Est ouverte'), '.'),
+      p('Choisis ', h('b', {}, 'Exécuter immédiatement'), ' et décoche ', h('b', {}, 'Notifier à l\'exécution'), '.'),
+      p('Suivant › choisis le raccourci ', h('b', {}, SHORTCUT_NAME), '.'),
+      p('Le raccourci n\'envoie qu\'une fois par matin : les ouvertures suivantes s\'arrêtent dès la première action. L\'iPhone est forcément déverrouillé quand tu ouvres une appli, donc Santé est lisible.')));
+  mount(
+    h('a', { class: 'back', href: '#/sources' }, '‹ Données suivies'),
+    h('h1', {}, `Raccourci « ${SHORTCUT_NAME} »`),
+    h('p', { class: 'sub' }, 'À faire une fois, dans l\'app Raccourcis de l\'iPhone : + en haut à droite, nomme le raccourci « ', SHORTCUT_NAME, ' », puis ajoute les actions ci-dessous dans l\'ordre (champ « Rechercher des actions »). Les mots ', v('ainsi'), ' sont des variables : touche le champ et choisis-les dans la barre au-dessus du clavier.'),
+    h('div', { class: 'card sc-act' }, h('b', {}, 'Avant de commencer : le jeton'),
+      h('div', { class: 'sc-body' },
+        p('Sur github.com › Settings › Developer settings › Fine-grained tokens › Generate new token.'),
+        p('Nom : Raccourci Nuits · Expiration : 1 an · Repository access : Only select repositories › ', h('b', {}, cfg.repo || 'muscu-data'), '.'),
+        p('Permissions › Repository › Contents : ', h('b', {}, 'Read and write'), '. Generate, puis copie le jeton (il commence par github_pat_).'),
+        h('a', { href: 'https://github.com/settings/personal-access-tokens/new', target: '_blank', rel: 'noopener' }, 'Ouvrir la page GitHub ›'))),
+    act(1, 'g', 'Texte', p('Colle le jeton.'), p('Puis action ', h('b', {}, 'Définir une variable'), ' : nom ', v('Jeton'), ', valeur ', v('Texte'), '.')),
+    act(2, 'g', 'Date actuelle, puis Formater la date', p('Format de date : Personnalisé, chaîne :'), code('yyyy-MM-dd'),
+      p('Puis ', h('b', {}, 'Définir une variable'), ' : ', v('Jour'), ' = ', v('Date formatée'), '.')),
+    act(3, 'b', 'Obtenir le contenu de l\'URL (déjà envoyé ce matin ?)', p('URL : l\'adresse ci-dessous, suivie de ', v('Jour'), ' puis de .csv'), code(api),
+      p('Afficher plus › Méthode : GET.'), ...headers),
+    act(4, 'o', 'Obtenir la valeur du dictionnaire, puis Si', p('Valeur de la clé ', h('b', {}, 'sha'), ' dans ', v('Contenu de l\'URL'), '.'),
+      p('Si ', v('Valeur du dictionnaire'), ' ', h('b', {}, 'a une valeur'), ' : action ', h('b', {}, 'Arrêter ce raccourci'), '. Supprime le « Sinon » ; « Fin du si » reste.')),
+    act(5, 'r', 'Rechercher des échantillons de santé', p('Type : ', h('b', {}, 'Analyse du sommeil'), '.'),
+      p('Ajouter un filtre : Date de début ', h('b', {}, 'est dans les 8 derniers jours'), '.'),
+      p('Trier par : Date de début, Plus ancien en premier. Limite : désactivée.'),
+      p('Au premier lancement, l\'iPhone demande l\'accès à Santé : autorise le sommeil.')),
+    act(6, 'o', 'Répéter avec chaque élément', p('Dans ', v('Échantillons de santé'), '. À l\'intérieur, une action ', h('b', {}, 'Texte'), ' qui contient, séparés par des points-virgules, sans espace :'),
+      p(v('Élément répété › Date de début'), ';', v('Élément répété › Date de fin'), ';', v('Élément répété › Valeur'), ';', v('Élément répété › Source')),
+      p('Pour les deux dates : touche la variable › Format de date : ', h('b', {}, 'ISO 8601'), ', avec l\'heure.')),
+    act(7, 'g', 'Combiner le texte', p(v('Résultats de la répétition'), ', avec ', h('b', {}, 'Nouvelles lignes'), '.')),
+    act(8, 'g', 'Encoder en base64', p(v('Texte combiné'), ' · Afficher plus › Sauts de ligne : ', h('b', {}, 'Aucun'), ' (sinon GitHub refuse le fichier).')),
+    act(9, 'o', 'Nom du fichier : la nuit de cette nuit est-elle là ?',
+      p(h('b', {}, 'Obtenir l\'élément de la liste'), ' : Dernier élément de ', v('Échantillons de santé'), '.'),
+      p(h('b', {}, 'Obtenir les détails des échantillons de santé'), ' : Date de fin. Puis ', h('b', {}, 'Formater la date'), ' : Personnalisé ', h('code', {}, 'yyyy-MM-dd'), '.'),
+      p('Si ', v('Date formatée'), ' est ', v('Jour'), ' : action ', h('b', {}, 'Texte'), ' = ', v('Jour'), '.'),
+      p('Sinon : action ', h('b', {}, 'Texte'), ' = ', v('Jour'), '-', v('Date actuelle'), ' au format personnalisé ', h('code', {}, 'HHmm'), '.'),
+      p('Après « Fin du si » : ', h('b', {}, 'Définir une variable'), ' ', v('Fichier'), ' = ', v('Si le résultat'), '.'),
+      p('Ainsi le fichier du jour n\'existe que si la nuit est complète : un passage plus tard dans la matinée la renverra.')),
+    act(10, 'b', 'Obtenir le contenu de l\'URL (envoi)', p('URL : l\'adresse ci-dessous, suivie de ', v('Fichier'), ' puis de .csv'), code(api),
+      p('Méthode : ', h('b', {}, 'PUT'), '.'), ...headers,
+      p('Corps de la requête : JSON, deux champs Texte :'), code('message'), p('valeur : Nuits du raccourci'), code('content'), p('valeur : ', v('Texte encodé en base64'))),
+    act(11, 'r', 'Afficher une notification', p('Texte : Nuits envoyées à Muscu.'),
+      p('Si rien n\'arrive dans l\'appli, lance le raccourci à la main depuis Raccourcis : l\'aperçu de l\'action 10 montre la réponse de GitHub.')),
+    autoCard,
+    h('p', { class: 'sub' }, 'Le jeton reste dans le raccourci, sur cet iPhone : ne partage pas ce raccourci. Pour le révoquer, supprime-le sur GitHub ; l\'appli garde son propre jeton.'));
+  if (part === 'auto') requestAnimationFrame(() => autoCard.scrollIntoView({ block: 'start' }));
 }
 const PERIODS = [['1m', '1 mois', 30], ['3m', '3 mois', 91], ['6m', '6 mois', 182], ['1a', '1 an', 365], ['all', 'Tout', null]];
 // Moyenne des valeurs sur les 7 jours qui finissent à t (points {t, v}).
@@ -3305,7 +3472,7 @@ function render() {
     case 'repos': return viewRest();
     case 'sync': return viewSync();
     case 'sauvegarde': return viewBackup();
-    case 'sources': return viewSources();
+    case 'sources': return parts[1] === 'raccourci' ? viewShortcutGuide(parts[2]) : viewSources();
     case 'withings': return viewWithings();
     case 'rappel': return viewReminder();
     case 'objectifs': return viewGoals();
@@ -3332,7 +3499,7 @@ function parentPage(hash) {
   if (hash.startsWith('#/historique/')) return '#/historique';
   if (hash.startsWith('#/corps/nutrition/')) return '#/corps/nutrition';
   if (hash.startsWith('#/ex/')) return exFrom.startsWith('#/seance/') ? exFrom : '#/historique/exercices';
-  if (hash === '#/withings') return '#/sources';
+  if (hash === '#/withings' || hash.startsWith('#/sources/')) return '#/sources';
   if (hash === '#/programme') return '#/objectifs';
   if (hash === '#/prog') return '#/reglages';
   if (hash.startsWith('#/prog/')) { const p = hash.split('/'); return p[2] === 's' && p.length > 4 ? p.slice(0, 4).join('/') : '#/prog'; }
